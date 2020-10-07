@@ -224,6 +224,9 @@ class GLAM_IO:
             f"CAG == {cag_id}"
         )
 
+    def has_genomes(self, base_path):
+        return "genome_manifest.feather" in self.read_keys(base_path)
+
 def hdf5_get_keys(
     fp, 
     group_path, 
