@@ -247,7 +247,7 @@ class GLAM_CALLBACKS:
             row_ix_list = [
                 int(ix)
                 for ix in args.get("mask", "").split(",")
-                if len(ix) > 0
+                if len(ix) > 0 and ix != 'None'
             ]
             output_style = []
             for ix in row_ix_list:
