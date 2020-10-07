@@ -1,7 +1,4 @@
-pandas>=1.0.0
-numpy
-seaborn
-plotly
+boto3
 dash==1.11.0
 dash-bootstrap-components==0.9.2
 dash-core-components==1.9.1
@@ -9,12 +6,6 @@ dash-html-components==1.0.3
 dash-renderer==1.4.0
 dash-table==4.6.2
 expiringdict
-h5py
-tables
-scikit-learn
-sqlalchemy
-redis
-redis-server
 Flask==1.1.2
 Flask-Caching==1.8.0
 Flask-Compress==1.5.0
@@ -22,4 +13,15 @@ Flask-Failsafe==0.2
 filelock
 gunicorn
 gevent
+h5py
+mysql-connector-python-rf
+numpy
+pandas>=1.0.0
+plotly
+redis
+redis-server
+scikit-learn
+seaborn
+sqlalchemy
+tables
 zarr

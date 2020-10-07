@@ -15,6 +15,8 @@ RUN pip3 uninstall -y numcodecs # make sure
 RUN pip3 install -v --no-cache-dir --no-binary numcodecs numcodecs==0.7.1
 RUN useradd -u 5555 -m -d /home/dash -c "dash user" dash
 ADD app.py /home/dash/
+ADD cli.py /home/dash/
+RUN ln -s /home/dash/cli.py /usr/local/bin/cli
 ADD helpers/ /home/dash/helpers/
 ADD share/ /share/
 RUN chown -R dash:dash /home/dash 
