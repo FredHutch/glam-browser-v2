@@ -624,12 +624,6 @@ class GLAM_LAYOUT:
         # Get the URI for the dataset
         dataset_uri = self.glam_db.get_dataset_uri(dataset_id)
 
-        # Read the manifest in order to render the card
-        manifest_df = self.glam_io.get_manifest(dataset_uri)
-
-        # Get the list of parameters available
-        parameter_list = self.glam_io.get_parameter_list(dataset_uri)
-
         return [
             # At the top of the dataset display is a banner with the dataset name
             self.dataset_button(
@@ -638,10 +632,14 @@ class GLAM_LAYOUT:
             ),
             # Below that is a card with the analysis itself            
             self.analysis_dict(dataset_id)[analysis_name].card(
+                # ID for this dataset
                 dataset_id, 
+                # Location to read data from
+                dataset_uri,
+                # Search string contains all parameters needed to render the card
                 search_string,
-                manifest_df,
-                parameter_list,
+                # Pass in the GLAM_IO object so that needed data can be read
+                self.glam_io
             )
         ]
 
@@ -1056,7 +1054,10 @@ class RichnessCard(AnalysisCard):
             log_x="on"
         )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1095,7 +1096,7 @@ class RichnessCard(AnalysisCard):
                         label="Color By",
                         options={
                             f: f
-                            for f in ["none"] + [f for f in metadata_df.columns.values if f != "Unnamed: 0"]
+                            for f in ["none"] + [f for f in manifest_df.columns.values if f != "Unnamed: 0"]
                         },
                         key="metadata",
                     ) + self.dropdown_menu(
@@ -1147,7 +1148,7 @@ class ExperimentSummaryCard(AnalysisCard):
         self.plot_list = []
         self.defaults = dict()
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
         # Parse the search string, while setting default arguments for this card
         # (while there are no arguments here, we need this to keep n={})
@@ -1196,7 +1197,10 @@ class SingleSampleCard(AnalysisCard):
             sample="none",
         )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1205,7 +1209,7 @@ class SingleSampleCard(AnalysisCard):
 
         # If there is no default sample, use the first one in the list
         if self.args["sample"] == "none":
-            self.args["sample"] = metadata_df.index.values[0]
+            self.args["sample"] = manifest_df.index.values[0]
 
         # Set the dataset ID (used to render card components)
         self.dataset_id = dataset_id
@@ -1224,7 +1228,7 @@ class SingleSampleCard(AnalysisCard):
                         label='Select Sample',
                         options={
                             specimen_name: specimen_name
-                            for specimen_name in metadata_df.index.values
+                            for specimen_name in manifest_df.index.values
                         },
                         key="sample"
                     ) + self.dropdown_menu(
@@ -1232,7 +1236,7 @@ class SingleSampleCard(AnalysisCard):
                         options={
                             **{
                                 specimen_name: specimen_name
-                                for specimen_name in metadata_df.index.values
+                                for specimen_name in manifest_df.index.values
                             },
                             **{
                                 "cag_size": "CAG Size"
@@ -1317,7 +1321,10 @@ class OrdinationCard(AnalysisCard):
                 description="Adjust the degree of clustering by t-SNE"
             )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1359,7 +1366,7 @@ class OrdinationCard(AnalysisCard):
                             "none": "None",
                             **{
                                 k: k
-                                for k in metadata_df.columns.values
+                                for k in manifest_df.columns.values
                             }
                         },
                         key="color_by",
@@ -1412,7 +1419,7 @@ class CAGSummaryCard(AnalysisCard):
             histogram_nbins = 50,
         )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1515,7 +1522,13 @@ class CagAbundanceHeatmap(AnalysisCard):
             annot_tax = "none",
         )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
+
+        # Get the list of parameters available
+        parameter_list = glam_io.get_parameter_list(dataset_uri)
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1557,6 +1570,7 @@ class CagAbundanceHeatmap(AnalysisCard):
                             variable_type = int,
                             min_value = 5,
                             max_value = 100,
+                            description = ""
                         ),
                         width = 4,
                     ),
@@ -1587,7 +1601,7 @@ class CagAbundanceHeatmap(AnalysisCard):
                             options = {
                                 **{
                                     col_name: col_name
-                                    for col_name in metadata_df.columns.values
+                                    for col_name in manifest_df.columns.values
                                 }
                             }
                         ) + self.dropdown_menu(
@@ -1661,12 +1675,18 @@ class CardTemplate(AnalysisCard):
 
         self.long_name = ""
         self.short_name = ""
-
+        self.plot_list = []
         self.defaults = dict(
 
         )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
+
+        # Get the list of parameters available
+        parameter_list = glam_io.get_parameter_list(dataset_uri)
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
