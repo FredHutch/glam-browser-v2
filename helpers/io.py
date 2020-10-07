@@ -32,7 +32,7 @@ class GLAM_IO:
         self.client = self.session.client("s3")
 
         # Set up an expiring cache for data objects
-        self.cache = defaultdict(lambda: ExpiringDict(max_len=100, max_age_seconds=3600))
+        self.cache = defaultdict(lambda: ExpiringDict(max_len=1000, max_age_seconds=3600))
         # and for keys
         self.key_cache = ExpiringDict(max_len=100, max_age_seconds=3600)
 
@@ -204,7 +204,6 @@ class GLAM_IO:
                 base_path,
                 prefix="cag_associations/"
             )
-            if fp.startswith()
         ]
 
     def get_cag_associations(self, base_path, parameter_name):
@@ -222,15 +221,21 @@ class GLAM_IO:
             fp.replace(".feather", "")
             for fp in self.read_keys(
                 base_path,
-                prefix=f"cag_associations/{parameter_name}/"
+                prefix=f"enrichments/{parameter_name}/"
             )
         ]
 
     def get_enrichments(self, base_path, parameter_name, annotation_type):
-        return self.read_item(
-            os.path.join(base_path, "cag_associations/"), 
-            f"{parameter_name}/{annotation_type}.feather"
+        df = self.read_item(
+            base_path,
+            f"enrichments/{parameter_name}/{annotation_type}.feather"
         )
+
+        # Not all datasets have enrichments
+        if df is None:
+            return None
+
+        return df.set_index("label")
 
     def get_cag_taxa(self, base_path, cag_id, taxa_rank):
         # The gene-level annotations of each CAG are sharded by CAG_ID % 1000
@@ -245,7 +250,11 @@ class GLAM_IO:
         
         return df.query(
             f"CAG == {cag_id}"
-        ).drop(columns="CAG")
+        ).drop(
+            columns="CAG"
+        ).apply(
+            lambda c: c.fillna(0).apply(float).apply(int) if c.name in ["parent", "tax_id"] else c,
+        )
 
     def get_cag_genome_containment(self, base_path, cag_id):
         # Genome containment is sharded by CAG_ID % 1000
@@ -262,8 +271,46 @@ class GLAM_IO:
             f"CAG == {cag_id}"
         ).drop(columns="CAG")
 
+    def get_top_genome_containment(self, base_path):
+        # The top genome containment for all CAGs is stored in a single table
+        df = self.read_item(
+            base_path,
+            "genome_top_hit.feather"
+        )
+
+        # Not all CAGs have genome containment
+        if df is None:
+            return None
+
+        return df.set_index("CAG")
+
+    def get_genome_manifest(self, base_path):
+        return self.read_item(base_path, "genome_manifest.feather")
+
     def has_genomes(self, base_path):
         return "genome_manifest.feather" in self.read_keys(base_path)
+
+    def has_functional_annotations(
+        self, 
+        base_path, 
+        func_prefix="gene_annotations/functional/"
+    ):
+        return len(self.read_keys(base_path, prefix=func_prefix)) > 0
+
+    def get_cag_functions(self, base_path, cag_id):
+        # All gene annotations are sharded by CAG_ID % 1000
+        df = self.read_item(
+            os.path.join(base_path, f"gene_annotations/functional/"),
+            f"{cag_id % 1000}.feather"
+        )
+
+        # Not all CAGs have genome containment
+        if df is None:
+            return None
+
+        return df.query(
+            f"CAG == {cag_id}"
+        ).drop(columns="CAG")
 
 def hdf5_get_keys(
     fp, 
