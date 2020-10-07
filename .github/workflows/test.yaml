@@ -14,13 +14,6 @@ jobs:
       DB_PORT: 3800
     steps:
       - uses: actions/checkout@v1
-      - name: Free disk space
-        run: |
-          sudo swapoff -a
-          sudo rm -f /swapfile
-          sudo apt clean
-          docker rmi $(docker image ls -aq)
-          df -h
       - name: Build Docker image
         run: |
           docker build -t glam .
