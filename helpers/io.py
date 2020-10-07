@@ -34,7 +34,7 @@ class GLAM_IO:
         # Set up an expiring cache for data objects
         self.cache = defaultdict(lambda: ExpiringDict(max_len=100, max_age_seconds=3600))
         # and for keys
-        self.key_cache = defaultdict(lambda: ExpiringDict(max_len=100, max_age_seconds=3600))
+        self.key_cache = ExpiringDict(max_len=100, max_age_seconds=3600)
 
     def read_item(self, base_path, suffix):
 
@@ -65,20 +65,22 @@ class GLAM_IO:
         # Return the value
         return df
 
-    def read_keys(self, base_path, suffix):
-        """Read the set of keys that match this suffix."""
+    def read_keys(self, base_path, prefix=None):
+        """Read all of the keys available for a single dataset."""
+
+        # Make sure that the base path ends with "/"
+        if not base_path.endswith("/"):
+            base_path = f"{base_path}/"
 
         # Check the cache
-        cached_keys = self.key_cache.get(base_path, {}).get(suffix)
+        cached_keys = self.key_cache.get(base_path)
         if cached_keys is not None:
-            return cached_keys
+            return self.filter_keys_by_prefix(cached_keys, prefix=prefix)
 
-        # Get the full path to the object
-        full_path = os.path.join(base_path, suffix)
-        logging.info("Reading keys below {}".format(full_path))
+        logging.info("Reading keys below {}".format(base_path))
 
         # Split up the bucket and prefix
-        bucket, prefix = full_path[5:].split("/", 1)
+        bucket, prefix = base_path[5:].split("/", 1)
 
         # List objects
         r = self.client.list_objects_v2(
@@ -106,9 +108,21 @@ class GLAM_IO:
                 keys.append(i["Key"].replace(prefix, ""))
 
         # Store in the cache
-        self.key_cache[base_path][suffix] = keys
+        self.key_cache[base_path] = keys
 
-        return keys
+        return self.filter_keys_by_prefix(keys, prefix=prefix)
+
+    def filter_keys_by_prefix(self, keys, prefix=None):
+        """Subset the keys from a repository to those below a given 'folder'"""
+        if prefix is None:
+            return keys
+
+        else:
+            return [
+                i[len(prefix):]
+                for i in keys
+                if i.startswith(prefix)
+            ]
 
     def get_manifest(self, base_path):
         df = self.read_item(base_path, "manifest.csv.gz")
@@ -173,8 +187,9 @@ class GLAM_IO:
             fp.replace(".feather", "")
             for fp in self.read_keys(
                 base_path,
-                "cag_associations/"
+                prefix="cag_associations/"
             )
+            if fp.startswith()
         ]
 
     def get_cag_associations(self, base_path, parameter_name):
@@ -190,7 +205,7 @@ class GLAM_IO:
             fp.replace(".feather", "")
             for fp in self.read_keys(
                 base_path,
-                f"cag_associations/{parameter_name}/"
+                prefix=f"cag_associations/{parameter_name}/"
             )
         ]
 
