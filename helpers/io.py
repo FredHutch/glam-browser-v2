@@ -51,7 +51,11 @@ class GLAM_IO:
         bucket, prefix = full_path[5:].split("/", 1)
 
         # Read the file object
-        obj = self.client.get_object(Bucket=bucket, Key=prefix)
+        try:
+            obj = self.client.get_object(Bucket=bucket, Key=prefix)
+        except self.client.exceptions.NoSuchKey:
+            # The file object does not exist
+            return None
 
         # Parse with Pandas
         if suffix.endswith(".feather"):
@@ -126,6 +130,7 @@ class GLAM_IO:
 
     def get_manifest(self, base_path):
         df = self.read_item(base_path, "manifest.csv.gz")
+        assert df is not None, "No data object was found"
 
         if "Unnamed: 0" in df.columns.values:
             df = df.drop(columns=["Unnamed: 0"])
@@ -136,6 +141,8 @@ class GLAM_IO:
 
     def get_specimen_metrics(self, base_path):
         df = self.read_item(base_path, "specimen_metrics.feather")
+
+        assert df is not None, "No data object was found"
 
         # Fix the mismatch in index variable type, if any
         df = pd.DataFrame({
@@ -155,32 +162,40 @@ class GLAM_IO:
 
     def get_dataset_metrics(self, base_path):
         df = self.read_item(base_path, "experiment_metrics.csv.gz")
-        if df is not None:
-            return df.set_index("variable")["value"]
+        
+        assert df is not None, "No data object was found"
+
+        return df.set_index("variable")["value"]
 
     def get_cag_abundances(self, base_path):
-        return self.read_item(
+        df = self.read_item(
             base_path, 
             "cag_abundances.feather"
-        ).set_index(
-            "CAG"
         )
+        
+        assert df is not None, "No data object was found"
+
+        return df.set_index("CAG")
 
     def get_cag_annotations(self, base_path):
-        return self.read_item(
+        df = self.read_item(
             base_path, 
             "cag_annotations.feather"
-        ).set_index(
-            "CAG"
         )
+        
+        assert df is not None, "No data object was found"
+
+        return df.set_index("CAG")
 
     def get_distances(self, base_path, distance_metric):
-        return self.read_item(
+        df = self.read_item(
             base_path, 
             f"distances/{distance_metric}.feather"
-        ).set_index(
-            "specimen"
         )
+
+        assert df is not None, "No data object was found"
+
+        return df.set_index("specimen")
 
     def get_parameter_list(self, base_path):
         return [
@@ -193,12 +208,14 @@ class GLAM_IO:
         ]
 
     def get_cag_associations(self, base_path, parameter_name):
-        return self.read_item(
+        df = self.read_item(
             os.path.join(base_path, "cag_associations/"), 
             f"{parameter_name}.feather"
-        ).set_index(
-            "CAG"
         )
+        
+        assert df is not None, "No data object was found"
+
+        return df.set_index("CAG")
 
     def get_enrichment_list(self, base_path, parameter_name):
         return [
@@ -217,12 +234,33 @@ class GLAM_IO:
 
     def get_cag_taxa(self, base_path, cag_id, taxa_rank):
         # The gene-level annotations of each CAG are sharded by CAG_ID % 1000
-        return self.read_item(
+        df = self.read_item(
             os.path.join(base_path, f"gene_annotations/taxonomic/{taxa_rank}/"),
             f"{cag_id % 1000}.feather"
-        ).query(
-            f"CAG == {cag_id}"
         )
+
+        # Not all CAGs have taxonomic annotations
+        if df is None:
+            return None
+        
+        return df.query(
+            f"CAG == {cag_id}"
+        ).drop(columns="CAG")
+
+    def get_cag_genome_containment(self, base_path, cag_id):
+        # Genome containment is sharded by CAG_ID % 1000
+        df = self.read_item(
+            os.path.join(base_path, f"genome_containment/"),
+            f"{cag_id % 1000}.feather"
+        )
+
+        # Not all CAGs have genome containment
+        if df is None:
+            return None
+
+        return df.query(
+            f"CAG == {cag_id}"
+        ).drop(columns="CAG")
 
     def has_genomes(self, base_path):
         return "genome_manifest.feather" in self.read_keys(base_path)
