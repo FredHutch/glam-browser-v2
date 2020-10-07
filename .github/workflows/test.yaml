@@ -4,17 +4,30 @@ on: [push, pull_request]
 
 jobs:
 
-  index:
+  startMariaDB:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: getong/mariadb-action@v1.1
+        with:
+          host port: 3800 # Optional, default value is 3306. The port of host
+          container port: 3307 # Optional, default value is 3306. The port of container
+          character set server: 'utf8' # Optional, default value is 'utf8mb4'. The '--character-set-server' option for mysqld
+          collation server: 'utf8_general_ci' # Optional, default value is 'utf8mb4_general_ci'. The '--collation-server' option for mysqld
+          mariadb version: 'latest' # Optional, default value is "latest". The version of the MariaDB
+          mysql database: 'test' # Optional, default value is "test". The specified database which will be create
+          mysql user: 'testAdmin' # Required if "mysql root password" is empty, default is empty. The superuser for the specified database. Can use secrets, too
+          mysql password: 'testPassword' # Required if "mysql user" exists. The password for the "mysql user"
+
+  setUpGlamDB:
     runs-on: ubuntu-latest
     env:
-      NXF_ANSI_LOG: 0
-      NXF_VER: 20.04.1
+      DB_NAME: 'glamDB'
+      DB_USERNAME: 'testAdmin'
+      DB_PASSWORD: 'testPassword'
+      DB_HOST: 'localhost'
+      DB_PORT: 3800
     steps:
       - uses: actions/checkout@v1
-      - name: Install Nextflow
-        run: |
-          wget -qO- get.nextflow.io | bash
-          sudo mv nextflow /usr/local/bin/
       - name: Free disk space
         run: |
           sudo swapoff -a
@@ -22,9 +35,13 @@ jobs:
           sudo apt clean
           docker rmi $(docker image ls -aq)
           df -h
-      - name:  Download geneshot results
+      - name: Build Docker image
         run: |
-          curl -s -L https://github.com/Golob-Minot/geneshot/releases/download/v0.6.3/geneshot.results.tar.gz --output geneshot.results.tar.gz && tar xzf geneshot.results.tar.gz
-      - name:  Index geneshot results
+          docker build -t glam .
+      - name:  Set up database
         run: |
-          nextflow run index.nf -profile testing --input output/geneshot.results.hdf5 --output_folder ./ --output_prefix glam -with-docker ubuntu:latest
+          docker run glam cli.py setup
+          docker run glam cli.py add-user --username testUser --email testUser@email.com
+          docker run glam cli.py set-password --username testUser --password testUserPassword
+          docker run glam cli.py add-dataset --dataset-id dataset_id --name dataset_name --uri s3://glam-datasets/dataset_id/
+          docker run glam cli.py grant-access --user testUser --dataset dataset_id
