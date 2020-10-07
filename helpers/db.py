@@ -286,31 +286,31 @@ class GLAM_DB:
         return dataset_table.set_index("id").loc[dataset_id, "uri"]
 
     # GRANT ACCESS FOR A USER TO ACCESS A DATASET
-    def grant_access(self, user_name=None, dataset_name=None):
-        assert user_name is not None
-        assert dataset_name is not None
+    def grant_access(self, user=None, dataset=None):
+        assert user is not None
+        assert dataset is not None
 
         # Make sure that this is a valid user name
-        msg = "User does not exist: {}".format(user_name)
-        assert user_name in self.read_table("user")["name"].values, msg
+        msg = "User does not exist: {}".format(user)
+        assert user in self.read_table("user")["name"].values, msg
 
-        msg = "Dataset does not exist: {}".format(dataset_name)
-        assert dataset_name in self.read_table("dataset")["id"].values, msg
+        msg = "Dataset does not exist: {}".format(dataset)
+        assert dataset in self.read_table("dataset")["id"].values, msg
 
         # Read the whole table of dataset access
         access_table = self.read_table("dataset_access")
 
-        if any((access_table["dataset_id"] == dataset_name) & (access_table["user_name"] == user_name)):
+        if any((access_table["dataset_id"] == dataset) & (access_table["user_name"] == user)):
             logging.info("User {} already has access to {}".format(
-                user_name, dataset_name
+                user, dataset
             ))
             return
 
         # Add to the table
         access_table = pd.DataFrame([
             {
-                "dataset_id": dataset_name,
-                "user_name": user_name,
+                "dataset_id": dataset,
+                "user_name": user,
             }
         ])
 
@@ -318,7 +318,7 @@ class GLAM_DB:
         self.write_table("dataset_access", access_table, if_exists="append")
 
         logging.info("User {} has been granted access to {}".format(
-            user_name, dataset_name
+            user, dataset
         ))
 
     def random_string(self, length):
