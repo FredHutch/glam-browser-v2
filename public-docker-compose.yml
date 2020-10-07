@@ -1,0 +1,8 @@
+version: '2'
+services:
+  glam:
+    ports:
+      - "8050:8050"
+    image: quay.io/fhcrc-microbiome/glam:latest
+    volumes:
+      - "./data:/share"

@@ -1,0 +1,43 @@
+
+before_script:
+  - curl -LO https://releases.rancher.com/cli/v0.6.2/rancher-linux-amd64-v0.6.2.tar.gz
+  - tar zxf rancher-linux-amd64-v0.6.2.tar.gz
+  
+build_test:
+  script:
+    - docker build --no-cache -t 458818213009.dkr.ecr.us-west-2.amazonaws.com/glam:latest .
+    - |
+        if docker ps -a|tr -s ' '|rev|cut -d ' ' -f 1|rev|grep -q glam
+        then
+        docker stop glam && docker rm --force glam
+        fi
+    - >-
+        docker run 
+          -e DB_NAME=$GLAM_DB_NAME
+          -e DB_USERNAME=$GLAM_DB_USERNAME
+          -e DB_PASSWORD=$GLAM_DB_PASSWORD
+          -e DB_HOST=$GLAM_DB_HOST
+          -e DB_PORT=$GLAM_DB_PORT
+          -e AWS_ACCESS_KEY_ID=$GLAM_AWS_ACCESS_KEY_ID
+          -e AWS_SECRET_ACCESS_KEY=$GLAM_AWS_SECRET_ACCESS_KEY
+          -e AWS_REGION=$GLAM_AWS_REGION
+          -e GTM_CONTAINER=$GLAM_GTM_CONTAINER
+          -d 
+          --name glam 
+          -p 8050:8050 
+          458818213009.dkr.ecr.us-west-2.amazonaws.com/glam:latest
+    - sleep 60
+    - curl -I http://localhost:8050 | grep -q "HTTP/1.1 200 OK"
+    - docker stop glam && docker rm --force glam 
+  
+deploy:
+  stage: deploy
+  only:
+    refs:
+       - cleansheet # TODO FIXME change to master at some point
+  script:
+    - AWS_ACCESS_KEY_ID=$ECR_ACCESS_KEY AWS_SECRET_ACCESS_KEY=$ECR_SECRET_KEY AWS_DEFAULT_REGION=$ECR_REGION aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 458818213009.dkr.ecr.us-west-2.amazonaws.com
+    - docker push 458818213009.dkr.ecr.us-west-2.amazonaws.com/glam:latest
+    - sleep 15
+    - rancher-v0.6.2/rancher --url https://ponderosa.fhcrc.org --access-key $RANCHERAPI_KEY --secret-key $RANCHERAPI_SECRET up -d --pull --force-upgrade --confirm-upgrade --stack glam --file docker-compose.yml --rancher-file rancher-compose.yml
+  

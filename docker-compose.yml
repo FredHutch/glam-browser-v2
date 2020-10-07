@@ -1,0 +1,11 @@
+version: '2'
+services:
+  glam:
+    ports:
+      - "8050:8050"
+    image: 458818213009.dkr.ecr.us-west-2.amazonaws.com/glam:latest
+
+    labels:
+      io.rancher.container.pull_image: always
+
+    restart: always  
