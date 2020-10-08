@@ -27,7 +27,8 @@ build_test:
         --name glam-browser-v2 
         -p 8050:8050 
         dockerimages.fhcrc.org/glam-browser-v2:latest
-    - sleep 60
+    - sleep 15
+    - docker logs glam-browser-v2
     - curl -I http://localhost:8050 | grep -q "HTTP/1.1 200 OK"
     - docker stop glam-browser-v2 && docker rm --force glam-browser-v2 
   
