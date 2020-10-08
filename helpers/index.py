@@ -11,6 +11,7 @@ import numpy as np
 import os
 import pandas as pd
 import tempfile
+from .taxonomy import Taxonomy
 
 
 class GLAM_INDEX:
@@ -19,11 +20,15 @@ class GLAM_INDEX:
         self,
         input_hdf=None,
         output_base=None,
+        overwrite=False,
         skip_enrichments=["eggNOG_desc"],
         aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
         region=os.environ.get("AWS_REGION", "us-west-2"),
     ):
+
+        # Store the --overwrite flag
+        self.overwrite = overwrite
 
         # Parse the S3 path
         assert output_base.startswith("s3://")
@@ -47,6 +52,9 @@ class GLAM_INDEX:
             }
             for path, groups, leaves in self.store.walk()
         }
+
+        # Keep a dict to cache some of the tables from the HDF5
+        self.cache = {}
 
         # Open a session with boto3
         self.session = boto3.session.Session(
@@ -78,12 +86,19 @@ class GLAM_INDEX:
         assert filetype in ["feather", "csv.gz"]
 
         # Append the key path to the overall base prefix
-        upload_prefix = os.path.join(
-            self.prefix, "{}.{}".format(key_path, filetype)
-        )
-        if self.path_exists(upload_prefix):
-            logging.info("Exists: {}".format(upload_prefix))
-            return
+        upload_prefix = self.key_uri(key_path, filetype=filetype)
+
+        # Check if the path already exists in S3
+        if self.key_exists(key_path):
+            # Check if the --overwrite flag was set
+            if self.overwrite:
+
+                # If so, we will log and continue
+                logging.info("Writing over: {}".format(upload_prefix))
+            else:
+                # If not, we will log and stop
+                logging.info("Exists: {}".format(upload_prefix))
+                return
 
         # implicit else
         logging.info("Uploading to {}".format(upload_prefix))
@@ -110,6 +125,20 @@ class GLAM_INDEX:
                 self.bucket,
                 upload_prefix
             )
+
+    def key_exists(self, key_path, filetype="feather"):
+        # Helper function to quickly check if a key exists in S3
+        return self.path_exists(
+            self.key_uri(
+                key_path, filetype=filetype
+            )
+        )
+
+    def key_uri(self, key_path, filetype="feather"):
+        # Single definition of how the URI is formatted
+        return os.path.join(
+            self.prefix, "{}.{}".format(key_path, filetype)
+        )
 
     def path_exists(self, prefix):
         """Check to see if an object exists in S3."""
@@ -311,55 +340,124 @@ class GLAM_INDEX:
 
         return df
 
+    
+    def add_to_cache(self, key_name):
+
+        # If we don't already have the data
+        if key_name not in self.cache:
+
+            # Check for the data in the HDF5
+            if key_name in self.store:
+
+                logging.info("Reading in {}".format(key_name))
+
+                self.cache[key_name] = pd.read_hdf(self.store, key_name)
+
+            # If the data is not present
+            else:
+
+                # Add None to the cache
+                self.cache[key_name] = None
+
 
     def parse_genome_containment(self, max_n_cags=250000, min_cag_prop=0.25):
         """Read in a summary of CAGs aligned against genomes."""
         key_name = "/genomes/cags/containment"
 
-        if key_name in self.store:
+        # Make sure the data is in the cache
+        self.add_to_cache(key_name)
 
-            logging.info("Reading in {}".format(key_name))
+        # Load the data from the cache
+        df = self.cache[key_name]
 
-            df = pd.read_hdf(self.store, key_name)
-
-            # Store information for no more than `max_n_cags`
-            if max_n_cags is not None:
-                logging.info("Subsetting to {:,} CAGs".format(max_n_cags))
-                df = df.query(
-                    "CAG < {}".format(max_n_cags)
-                )
-                logging.info("Retained {:,} alignments for {:,} CAGs".format(
-                    df.shape[0],
-                    df["CAG"].unique().shape[0]
-                ))
-
-            # Filter alignments by `min_cag_prop`
-            if min_cag_prop is not None:
-                logging.info("Filtering to cag_prop >= {}".format(min_cag_prop))
-                df = df.query("cag_prop >= {}".format(min_cag_prop))
-                logging.info("Retained {:,} alignments for {:,} CAGs".format(
-                    df.shape[0],
-                    df["CAG"].unique().shape[0]
-                ))
-
-            # Yield the subset for each CAG
-            for group_ix, group_df in df.reindex(
-                columns=[
-                    "CAG",
-                    "genome",
-                    "n_genes",
-                    "cag_prop",
-                ]
-            ).assign(
-                group=df["CAG"].apply(lambda v: v % 1000)
-            ).groupby("group"):
-                yield group_ix, group_df.drop(columns="group")
-
-        else:
+        # First, stop if no data is present
+        if df is None:
 
             logging.info("No genome alignments found")
 
             yield None, None
+
+        # Otherwise, data is present
+
+        # First, filter data by `max_n_cags` and `min_cag_prop`
+        df = self.filter_genome_containment(df, max_n_cags, min_cag_prop)
+
+        # Yield the subset for each CAG
+        for group_ix, group_df in df.reindex(
+            columns=[
+                "CAG",
+                "genome",
+                "n_genes",
+                "cag_prop",
+            ]
+        ).assign(
+            group=df["CAG"].apply(lambda v: v % 1000)
+        ).groupby("group"):
+            yield group_ix, group_df.drop(columns="group")
+
+    def parse_top_genome_containment(self, max_n_cags=250000, min_cag_prop=0.25):
+        """Format a table of the top genome containment per CAG."""
+        key_name = "/genomes/cags/containment"
+
+        # Make sure the data is in the cache
+        self.add_to_cache(key_name)
+
+        # Load the data from the cache
+        df = self.cache[key_name]
+
+        # First, stop if no data is present
+        if df is None:
+
+            logging.info("No genome alignments found")
+
+            return None
+
+        # Otherwise, data is present
+
+        # First, filter data by `max_n_cags` and `min_cag_prop`
+        df = self.filter_genome_containment(df, max_n_cags, min_cag_prop)
+
+        # Yield the top hit for each CAG
+        return df.sort_values(
+            by="n_genes", 
+            ascending=False
+        ).groupby(
+            "CAG"
+        ).head(
+            1
+        )
+
+    def filter_genome_containment(self, df, max_n_cags, min_cag_prop):
+
+        cache_key = "filtered_genome_containment"
+        if self.cache.get(cache_key) is not None:
+            return self.cache.get(cache_key)
+
+        # Store information for no more than `max_n_cags`
+        if max_n_cags is not None:
+            logging.info("Subsetting to {:,} CAGs".format(max_n_cags))
+            df = df.query(
+                "CAG < {}".format(max_n_cags)
+            )
+            logging.info("Retained {:,} alignments for {:,} CAGs".format(
+                df.shape[0],
+                df["CAG"].unique().shape[0]
+            ))
+
+        # Filter alignments by `min_cag_prop`
+        if min_cag_prop is not None:
+            logging.info("Filtering to cag_prop >= {}".format(min_cag_prop))
+            df = df.query("cag_prop >= {}".format(min_cag_prop))
+            logging.info("Retained {:,} alignments for {:,} CAGs".format(
+                df.shape[0],
+                df["CAG"].unique().shape[0]
+            ))
+
+        # Cache the result in memory
+        self.cache[cache_key] = df
+
+        return df
+
 
     def parse_distance_matrices(self):
         """Read in each of the distance matrices in the store."""
@@ -554,6 +652,14 @@ class GLAM_INDEX:
                     "genome_containment/{}".format(group_ix)
                 )
 
+        # Write out the table of the top genome hits for each CAG
+        if "containment" in self.leaves("/genomes/cags"):
+            self.write(
+                self.parse_top_genome_containment(),
+                "genome_top_hit"
+            )
+
+
         # Read in the distance matrices
         for metric_name, metric_df in self.parse_distance_matrices():
 
@@ -628,11 +734,46 @@ class GLAM_INDEX:
         # Read in the taxonomy, if present
         if "taxonomy" in self.leaves("/ref"):
             tax = Taxonomy(self.store)
+
+            # Write out the taxonomy
+            self.write(
+                tax.taxonomy_df.reset_index(),
+                "taxonomy"
+            )
         else:
             tax = None
 
-        # Read in the gene annotations for just those CAGs
-        functional_annot_df, counts_df, rank_summaries = self.parse_gene_annotations(tax)
+        # Check to see if the annotations have been written out
+        process_gene_annotations = True
+        if all([
+            self.key_exists(f"gene_annotations/{prefix}/0")
+            for prefix in [
+                "functional",
+                "taxonomic/all",
+                "taxonomic/species",
+                "taxonomic/genus",
+                "taxonomic/family",
+            ]
+        ]):
+            # Check to see if the --overwrite flag is set
+            if self.overwrite:
+                # Log, set process_gene_annotations, and continue
+                logging.info("Gene annotations were found, but will be overwritten")
+                process_gene_annotations = True
+            else:
+                # Log, set process_gene_annotations, and continue
+                logging.info("Gene annotations were found and --overwrite was not set, skipping")
+                process_gene_annotations = False
+
+        if process_gene_annotations:
+            # Read in the gene annotations for just those CAGs
+            functional_annot_df, counts_df, rank_summaries = self.parse_gene_annotations(tax)
+
+        # The gene annotations should be skipped
+        else:
+            functional_annot_df = None
+            counts_df = None
+            rank_summaries = None
 
         # Store the summary annotation tables if the annotations are available
         if functional_annot_df is not None:
@@ -667,125 +808,6 @@ class GLAM_INDEX:
                         group_df.drop(columns="group"),
                         key_name
                     )
-
-
-class Taxonomy:
-
-    def __init__(self, store):
-        """Read in the taxonomy table."""
-
-        # Read the taxonomy table
-        logging.info("Reading in /ref/taxonomy")
-
-        self.taxonomy_df = pd.read_hdf(
-            store,
-            "/ref/taxonomy"
-        ).apply(
-            lambda c: c.fillna(0).apply(float).apply(
-                int) if c.name in ["parent", "tax_id"] else c,
-        ).set_index(
-            "tax_id"
-        )
-
-        self.all_taxids = set(self.taxonomy_df.index.values)
-
-    @lru_cache(maxsize=None)
-    def path_to_root(self, tax_id, max_steps=100):
-        """Parse the taxonomy to yield a list with all of the taxa above this one."""
-
-        visited = []
-
-        for _ in range(max_steps):
-
-            # Skip taxa which are missing
-            if tax_id not in self.all_taxids:
-                break
-
-            # Add to the path we have visited
-            visited.append(tax_id)
-
-            # Get the parent of this taxon
-            parent_id = self.taxonomy_df.loc[tax_id, "parent"]
-
-            # If the chain has ended, stop
-            if parent_id in visited or parent_id == 0:
-                break
-
-            # Otherwise, keep walking up
-            tax_id = parent_id
-
-        return visited
-
-    @lru_cache(maxsize=None)
-    def anc_at_rank(self, tax_id, rank):
-        for anc_tax_id in self.path_to_root(tax_id):
-            if self.taxonomy_df.loc[anc_tax_id, "rank"] == rank:
-                return anc_tax_id
-
-    def name(self, tax_id):
-        if tax_id in self.all_taxids:
-            return self.taxonomy_df.loc[tax_id, "name"]
-
-    def parent(self, tax_id):
-        if tax_id in self.all_taxids:
-            return self.taxonomy_df.loc[tax_id, "parent"]
-
-    def make_cag_tax_df(
-        self,
-        taxa_vc,
-    ):
-        """Return a nicely formatted taxonomy table from a list of tax IDs and the number of assignments for each."""
-
-        # We will construct a table with all of the taxa in the tree, containing
-        # The ID of that taxon
-        # The name of that taxon
-        # The number of genes assigned to that taxon (or its children)
-        # The rank of that taxon
-        # The ID of the parent of that taxon
-
-        # The number of genes found at that taxon or in its decendents
-        counts = defaultdict(int)
-
-        # Keep track of the total number of genes with a valid tax ID
-        total_genes_assigned = 0
-
-        # Iterate over each terminal leaf
-        for tax_id, n_genes in taxa_vc.items():
-
-            # Skip taxa which aren't in the taxonomy
-            if tax_id not in self.taxonomy_df.index.values:
-                continue
-
-            # Count all genes part of this analysis
-            total_genes_assigned += n_genes
-
-            # Walk up the tree from the leaf to the root
-            for anc_tax_id in self.path_to_root(tax_id):
-
-                # Add to the sum for every node we visit along the way
-                counts[anc_tax_id] += n_genes
-
-        if len(counts) == 0:
-            return pd.DataFrame([{
-                "tax_id": None
-            }])
-
-        # Make a DataFrame
-        df = pd.DataFrame({
-            "count": counts,
-        })
-
-        # Add the name, parent, rank
-        df = df.assign(
-            tax_id=df.index.values,
-            parent=self.taxonomy_df["parent"],
-            rank=self.taxonomy_df["rank"],
-            name=self.taxonomy_df["name"],
-            total=total_genes_assigned,
-        )
-
-        return df
-
 
 if __name__ == "__main__":
 
@@ -823,6 +845,12 @@ if __name__ == "__main__":
         help="Base path to S3 to write out data which can be read by the GLAM Browser"
     )
 
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="By default, any existing data will be ignored. Use this flag to write over existing data."
+    )
+
     # Parse the arguments
     args = parser.parse_args()
 
@@ -831,7 +859,8 @@ if __name__ == "__main__":
 
     glam_index = GLAM_INDEX(
         input_hdf=args.input,
-        output_base=args.output
+        output_base=args.output,
+        overwrite=args.overwrite,
     )
 
     glam_index.index()

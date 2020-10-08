@@ -30,7 +30,8 @@ class GLAM_PLOTTING:
             "single-sample-graph": self.single_sample_graph,
             "ordination-graph": self.ordination_graph,
             "cag-descriptive-stats-graph": self.cag_summary_plot,
-            "cag-abund-heatmap": self.cag_abundance_heatmap
+            "cag-abund-heatmap": self.cag_abundance_heatmap,
+            "cag-annot-heatmap": self.cag_annotation_heatmap
         }
 
     ##################################
@@ -743,6 +744,64 @@ class GLAM_PLOTTING:
     #########################
     # CAG ABUNDANCE HEATMAP #
     #########################
+    def get_cags_by_size(self, dataset_uri, glam_io, min_cag_size, max_cag_size):
+
+        # Read in the CAG summary metrics, which include CAG size
+        cag_annot_df = glam_io.get_cag_annotations(dataset_uri)
+
+        # Get the CAGs which are above the minimum size threshold
+        cag_annot_df = cag_annot_df.query(
+            f"size >= {min_cag_size}"
+        )
+
+        # If a maximum size was specified, filter by that as well
+        if max_cag_size > 0:
+            cag_annot_df = cag_annot_df.query(
+                f"size <= {max_cag_size}"
+            )
+            
+        return cag_annot_df.index.values
+
+    def sort_cags_by_property(
+        self, 
+        dataset_uri, 
+        glam_io, 
+        select_cags_by, 
+        cag_id_list
+    ):
+        # If a parameter has been selected, parse that from `select_cags_by`
+        if select_cags_by.startswith("parameter::"):
+            # A parameter has been selected
+            parameter_name = select_cags_by.replace("parameter::", "")
+            # Get the association with this parameter
+            corncob_df = glam_io.get_cag_associations(
+                dataset_uri,
+                parameter_name
+            )
+
+            # Sort CAGs by their absolute Wald measure of association with a parameter
+            return corncob_df.reindex(
+                index=cag_id_list
+            ).sort_values(
+                by="abs_wald",
+                ascending=False
+            ).index.values
+
+        else:
+            # Read in the table containing CAG size and mean abundance
+            cag_annot_df = glam_io.get_cag_annotations(dataset_uri)
+
+            # The CAGs will be selected for plotting either based on size or abundance
+            m = f"Unknown `select_cags_by`: {select_cags_by}"
+            assert select_cags_by in ["abundance", "size"], m
+
+            # Return a sorted list
+            return cag_annot_df.reindex(
+                index=cag_id_list
+            ).sort_values(
+                by="mean_abundance" if select_cags_by == "abundance" else select_cags_by,
+                ascending=False
+            ).index.values
 
     def cag_abundance_heatmap(
         self,
@@ -754,7 +813,6 @@ class GLAM_PLOTTING:
     ):
         # Get the data to plot
         cag_abund_df = glam_io.get_cag_abundances(dataset_uri)
-        cag_annot_df = glam_io.get_cag_annotations(dataset_uri)
         manifest_df = glam_io.get_manifest(dataset_uri)
 
         # Parse the arguments
@@ -766,71 +824,55 @@ class GLAM_PLOTTING:
         ]
         # Metric used to display abundance
         abundance_metric = args["metric"]
+
         # Selection drives the clustering of the abundance table
         cluster_by = args["group_by"]
+
         # If specified, show taxonomic rank
         taxa_rank = args["annot_tax"]
-        # Criterion used to select which CAGs to plot
-        select_cags_by = args["select_cags_by"]
-        # Minimum size threshold for each CAG
-        min_cag_size = int(args["min_cag_size"])
-        # Maximum size threshold for each CAG
-        max_cag_size = int(args["max_cag_size"])
+
         # The number of CAGs to plot
         ncags = int(args["ncags"])
 
         # Get the list of CAGs which satisfy the size filtering
-        cag_id_list = cag_annot_df.query(
-            f"size >= {min_cag_size}"
-        ).index.values
-        if max_cag_size > 0:
-            cag_id_list = cag_annot_df.query(
-                f"size <= {max_cag_size}"
-            ).index.values
+        cag_id_list = self.get_cags_by_size(
+            dataset_uri, 
+            glam_io,
+            int(args["min_cag_size"]),
+            int(args["max_cag_size"]),
+        )
 
         assert len(cag_id_list) > 0, "No CAGs passed the size filtering threshold"
 
-        # If a parameter has been selected, parse that from `select_cags_by`
-        if select_cags_by.startswith("parameter::"):
+        # Sort the CAGs on the basis of args["select_cags_by"]
+        cag_id_list = self.sort_cags_by_property(
+            dataset_uri, 
+            glam_io, 
+            args["select_cags_by"], 
+            cag_id_list
+        )
+
+        # Just take the top `ncags`
+        cag_id_list = cag_id_list[:min(ncags, len(cag_id_list))]
+
+        assert len(cag_id_list) > 0, "Did not find any CAGs to plot"
+
+        # If a parameter was used to select CAGs, read in the corncob results for that parameter
+        if args["select_cags_by"].startswith("parameter::"):
             # A parameter has been selected
-            parameter_name = select_cags_by.replace("parameter::", "")
-            # Get the association with this parameter
+            parameter_name = args["select_cags_by"].replace("parameter::", "")
+
+            # Read the corbcob results for this parameter
             corncob_df = glam_io.get_cag_associations(
-                dataset_uri, 
-                parameter_name
+                dataset_uri, parameter_name
             )
-
-            # Use that list of associations to select the CAGs which will be plotted
-            cag_id_list = corncob_df.reindex(
-                index=cag_id_list
-            ).sort_values(
-                by="abs_wald",
-                ascending=False
-            ).head(
-                ncags
-            ).index.values
-
+            
             # Subset the corncob results to just these CAGs
             corncob_df = corncob_df.reindex(index=cag_id_list)
-
         else:
             # No parameter was selected
             corncob_df = None
 
-            # The CAGs will be selected for plotting either based on size or abundance
-            m = f"Unknown `select_cags_by`: {select_cags_by}"
-            assert select_cags_by in ["abundance", "size"], m
-
-            cag_id_list = cag_annot_df.reindex(
-                index=cag_id_list
-            ).sort_values(
-                by="mean_abundance" if select_cags_by == "abundance" else select_cags_by,
-                ascending=False
-            ).head(
-                ncags
-            ).index.values
-
-        assert len(cag_id_list) > 0, "Did not find any CAGs to plot"
 
         # Get the the taxonomic annotations, if specified
         if taxa_rank != "none":
@@ -1052,7 +1094,299 @@ class GLAM_PLOTTING:
         )
         return fig
 
-            
+
+    ##########################
+    # CAG ANNOTATION HEATMAP #
+    ##########################
+    def get_cags_for_annotation_heatmap(self, dataset_uri, glam_io, args):
+        """Given a set of arguments, construct the DataFrame for plotting"""
+        # Get the list of CAGs which satisfy the size filtering
+        cag_id_list = self.get_cags_by_size(
+            dataset_uri,
+            glam_io,
+            int(args["min_cag_size"]),
+            int(args["max_cag_size"]),
+        )
+
+        # Sort the CAGs on the basis of args["select_cags_by"]
+        cag_id_list = self.sort_cags_by_property(
+            dataset_uri,
+            glam_io,
+            args["select_cags_by"],
+            cag_id_list
+        )
+
+        # If 'genomes' were selected, filter down CAGs to those with any hits
+        if args["annot_type"] == "genomes":
+            # Make a set with all CAGs that have a genome containment score
+            genome_cags = set(
+                glam_io.get_top_genome_containment(
+                    dataset_uri
+                ).index.values
+            )
+            # Filter down the set of CAGs to consider
+            cag_id_list = [
+                cag_id
+                for cag_id in cag_id_list
+                if cag_id in genome_cags
+            ]
+
+        # Assemble the annotations for each CAG
+        # Any CAG which does not have annotations will be skipped
+        # Once we've found args["ncags"] CAGs with annotations, we'll stop
+        dat = []
+ 
+        # Iterate over every CAG in the list
+        for cag_id in cag_id_list:
+
+            if len(dat) >= int(args["ncags"]):
+                break
+
+            # Check to see if it has the selected annotation
+
+            # Check the genome containment table
+            if args["annot_type"] == "genomes":
+
+                # Read in the genome containment for this CAG
+                cag_df = glam_io.get_cag_genome_containment(
+                    dataset_uri, cag_id
+                )
+
+                assert cag_df.shape[0] > 0, f"CAG {cag_id} unexpectedly had no genome containment found"
+
+                # Add to the list
+                dat.append(
+                    cag_df.assign(
+                        CAG=cag_id
+                    ).rename(
+                        columns=dict(
+                            n_genes = "count",
+                            genome = "name",
+                        )
+                    )
+                )
+
+            elif args["annot_type"] == "eggNOG_desc":
+                # Read in the functional annotation for this CAG
+                cag_df = glam_io.get_cag_functions(
+                    dataset_uri, cag_id
+                )
+
+                # If there are any annotations
+                if cag_df.shape[0] > 0:
+
+                    # Add to the list
+                    dat.append(
+                        cag_df.assign(
+                            CAG=cag_id
+                        )
+                    )
+
+            else:
+
+                # All remaining annotations are implicitly taxonomic
+
+                # Read in the complete set of taxonomic annotations for this CAG
+                cag_df = glam_io.get_cag_taxa(
+                    dataset_uri, 
+                    cag_id,
+                    "all" if args["annot_type"] == "taxonomic" else args["annot_type"]
+                )
+
+                # If there are any annotations
+                if cag_df.shape[0] > 0:
+
+                    # Add to the list
+                    dat.append(
+                        cag_df.assign(CAG=cag_id)
+                    )
+
+        # If we didn't find any annotations, return None
+        if len(dat) == 0:
+            return None
+
+        # Otherwise, return a concatenated list of all of the DataFrames
+        return pd.concat(dat)
+
+    def cag_annotation_heatmap(
+        self,
+        glam_io=None,
+        args=None,
+        dataset_uri=None,
+        figure_width=1000,
+        figure_height=800,
+    ):
+        """Render a heatmap showing gene-level annotations across multiple CAGs."""
+        
+        # Given a set of arguments, construct the DataFrame with values used for plotting
+        cag_annot_df = self.get_cags_for_annotation_heatmap(dataset_uri, glam_io, args)
+
+        # If there was an error, render an empty figure
+        if cag_annot_df is None:
+            return go.Figure()
+
+        # Get the size of all CAGs
+        cag_sizes = glam_io.get_cag_annotations(dataset_uri)["size"]
+
+        # Set up variables that will be used to drive the plot creation
+        annotation_type = args["annot_type"]
+        nannots = int(args["nannots"])
+
+        # Add human-readable names for some of the annotations
+        annotation_names = None
+        if annotation_type == "genomes":
+            annotation_names = glam_io.get_genome_manifest(
+                dataset_uri
+            ).set_index("id")["name"]
+
+        # If a parameter was used to select CAGs, read in the enrichment
+        # of that parameter across the selected features
+        # By default, assume that no enrichments or corncob results are available
+        enrichment_df = None
+        corncob_df = None
+        # If a parameter was used to select CAGs
+        if args["select_cags_by"].startswith("parameter::"):
+            # Get the name of that parameter
+            parameter = args["select_cags_by"][len("parameter::"):]
+
+            # Read in the corncob results for this parameter
+            corncob_df = glam_io.get_cag_associations(
+                dataset_uri, parameter
+            )
+
+            # Check if enrichments are available for this annotation type
+            if annotation_type in glam_io.get_enrichment_list(dataset_uri, parameter):
+                # Then read in those enrichment values
+                enrichment_df = glam_io.get_enrichments(
+                    dataset_uri,
+                    parameter,
+                    annotation_type
+                )
+
+            elif annotation_type == "taxonomic":
+                # Get the enrichments across all available taxonomic levels
+                enrichment_df = pd.concat([
+                    glam_io.get_enrichments(
+                        dataset_uri,
+                        parameter,
+                        rank
+                    ).assign(
+                        rank = rank
+                    )
+                    for rank in glam_io.get_enrichment_list(dataset_uri, parameter)
+                    if rank in ["phylum", "class", "order", "family", "genus", "species"]
+                ])
+
+        # If the annotation is taxonomic, then we will use a dedicated function to prepare the data for plotting
+        if annotation_type == "taxonomic":
+
+            # Three data structures are needed to plot the full taxonomy, the number of counts
+            # at each terminal node, the taxonomy linking each terminal node to its parents,
+            # and (for convenience) a list of ancestors for each terminal node
+            plot_df, tax_df = format_taxonomic_annot_df(
+                cag_annot_df,
+                enrichment_df,
+                nannots
+            )
+
+        # Otherwise, just format the annotation by pivoting to wide format and selecing the top
+        # N annotations by either frequency or the enrichment absolute Wald (if provided)
+        else:
+
+            # Format the annotation table
+            plot_df = format_annot_df(
+                cag_annot_df,
+                annotation_type,
+                enrichment_df,
+                nannots,
+                cag_sizes,
+            )
+
+            # Replace the annotation names, if provided
+            if annotation_names is not None:
+                plot_df = plot_df.rename(
+                    columns=annotation_names.get
+                )
+
+            # Sort the rows and columns with linkage clustering
+            plot_df = cluster_dataframe(plot_df.T).T
+
+        # Lacking functional/taxonomic enrichments or CAG-level estimated coefficients of association
+        if enrichment_df is None and (corncob_df is None or len(corncob_df) == 0):
+
+            # If the plot type is Taxonomic
+            if annotation_type == "taxonomic":
+
+                # Make a plot with the proportion of genes assigned, alongside the taxonomy
+                fig = plot_taxonomic_annotations_without_enrichment(
+                    plot_df,
+                    tax_df,
+                )
+
+            # all other plot types
+            else:
+                # Make a very simple plot
+                fig = go.Figure(
+                    data=draw_cag_annotation_panel(
+                        plot_df,
+                        cag_sizes,
+                    )
+                )
+
+        # We have CAG association metrics, but no label enrichment
+        elif enrichment_df is None and corncob_df is not None and len(corncob_df) > 0:
+
+            if annotation_type == "taxonomic":
+
+                fig = plot_taxonomic_annotations_with_cag_associations_only(
+                    plot_df,
+                    tax_df,
+                    corncob_df
+                )
+
+            else:
+
+                # Just plot the association metrics for the CAGs
+                fig = draw_cag_annot_heatmap_with_cag_estimates(
+                    plot_df,
+                    corncob_df,
+                    cag_sizes,
+                )
+
+        # We have information on parameter association for both CAGs and annotation labels
+        else:
+
+            # Plot the full taxonomy with a dedicated function to render the etree
+            if annotation_type == "taxonomic":
+                fig = plot_taxonomic_annotations_with_enrichment(
+                    plot_df,
+                    tax_df,
+                    corncob_df,
+                    enrichment_df
+                )
+
+            # All other annotation types
+            else:
+
+                # Make a plot with association metrics on both the rows and columns
+                # Four panels, side-by-side, sharing the x-axis and y-axis
+
+                fig = draw_cag_annot_heatmap_with_cag_estimates_and_enrichments(
+                    plot_df,
+                    corncob_df,
+                    enrichment_df,
+                    cag_sizes,
+                )
+
+        fig.update_layout(
+            width=figure_width,
+            height=figure_height,
+            template="simple_white",
+        )
+
+        return fig
+
+        
 def calc_clr(v):
     """Calculate the CLR for a vector of abundances."""
     # Index of non-zero values
@@ -1744,136 +2078,6 @@ def draw_cag_abund_heatmap_panel(
 
     )
 
-##########################
-# CAG ANNOTATION HEATMAP #
-##########################
-def draw_cag_annotation_heatmap(
-    cag_annot_df,
-    annotation_type,
-    enrichment_df,
-    corncob_df,
-    n_annots,
-    annotation_names,
-    cag_sizes,
-    figure_width=1000,
-    figure_height=800,
-):
-    """Render the heatmap with CAG annotations."""
-    if cag_annot_df is None:
-        return go.Figure()
-
-
-    # If the annotation is taxonomic, then we will use a dedicated function to prepare the data for plotting
-    if annotation_type == "taxonomic":
-
-
-        # Three data structures are needed to plot the full taxonomy, the number of counts
-        # at each terminal node, the taxonomy linking each terminal node to its parents,
-        # and (for convenience) a list of ancestors for each terminal node
-        plot_df, tax_df = format_taxonomic_annot_df(
-            cag_annot_df,
-            enrichment_df,
-            n_annots
-        )
-
-    # Otherwise, just format the annotation by pivoting to wide format and selecing the top
-    # N annotations by either frequency or the enrichment absolute Wald (if provided)
-    else:
-
-
-        # Format the annotation table
-        plot_df = format_annot_df(
-            cag_annot_df, 
-            annotation_type, 
-            enrichment_df, 
-            n_annots,
-            cag_sizes,
-        )
-
-        # Replace the annotation names, if provided
-        if annotation_names is not None:
-            plot_df = plot_df.rename(
-                columns=annotation_names.get
-            )
-
-        # Sort the rows and columns with linkage clustering
-        plot_df = cluster_dataframe(plot_df.T).T
-
-    # Lacking functional/taxonomic enrichments or CAG-level estimated coefficients of association
-    if enrichment_df is None and (corncob_df is None or len(corncob_df) == 0):
-
-        # If the plot type is Taxonomic
-        if annotation_type == "taxonomic":
-
-            # Make a plot with the proportion of genes assigned, alongside the taxonomy
-            fig = plot_taxonomic_annotations_without_enrichment(
-                plot_df,
-                tax_df,
-            )
-
-        # all other plot types
-        else:
-            # Make a very simple plot
-            fig = go.Figure(
-                data=draw_cag_annotation_panel(
-                    plot_df,
-                    cag_sizes,
-                )
-            )
-
-    # We have CAG association metrics, but no label enrichment
-    elif enrichment_df is None and corncob_df is not None and len(corncob_df) > 0:
-
-        if annotation_type == "taxonomic":
-
-            fig = plot_taxonomic_annotations_with_cag_associations_only(
-                plot_df,
-                tax_df,
-                corncob_df
-            )
-
-        else:
-
-            # Just plot the association metrics for the CAGs
-            fig = draw_cag_annot_heatmap_with_cag_estimates(
-                plot_df,
-                corncob_df,
-                cag_sizes,
-            )
-
-    # We have information on parameter association for both CAGs and annotation labels
-    else:
-
-        # Plot the full taxonomy with a dedicated function to render the etree
-        if annotation_type == "taxonomic":
-            fig = plot_taxonomic_annotations_with_enrichment(
-                plot_df,
-                tax_df,
-                corncob_df,
-                enrichment_df
-            )
-
-        # All other annotation types
-        else:
-
-            # Make a plot with association metrics on both the rows and columns        
-            # Four panels, side-by-side, sharing the x-axis and y-axis
-
-            fig = draw_cag_annot_heatmap_with_cag_estimates_and_enrichments(
-                plot_df,
-                corncob_df,
-                enrichment_df,
-                cag_sizes,
-            )
-
-
-    fig.update_layout(
-        width=figure_width,
-        height=figure_height,
-        template="simple_white",
-    )
-
-    return fig
 
 def draw_path_to_root_tree(path_to_root_df):
 
@@ -2036,10 +2240,8 @@ def plot_taxonomic_annotations_with_enrichment(
 
     fig.add_trace(
         draw_enrichment_estimate_panel(
-            enrichment_df.loc[
-                enrichment_df["label"].isin(dendro_leaves)
-            ].set_index(
-                "label"
+            enrichment_df.reindex(
+                index=set(enrichment_df.index.values) & set(dendro_leaves)
             ),
             dendro_leaves,
             dendro_ticks,
@@ -2613,7 +2815,7 @@ def format_taxonomic_annot_df(cag_annot_df, enrichment_df, n_annots):
     if enrichment_df is not None:
 
         # Iterate over the most consistently associated labels
-        for _, r in enrichment_df.sort_values(
+        for name, r in enrichment_df.sort_values(
             by="abs_wald",
             ascending=False
         ).iterrows():
@@ -2621,7 +2823,7 @@ def format_taxonomic_annot_df(cag_annot_df, enrichment_df, n_annots):
             matched_org = tax_df.query(
                 "rank == '{}'".format(r["rank"])
             ).query(
-                "name == '{}'".format(r["label"])
+                "name == '{}'".format(name)
             )
 
             if matched_org.shape[0] == 1:

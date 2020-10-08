@@ -587,7 +587,8 @@ class GLAM_LAYOUT:
             SingleSampleCard(),
             OrdinationCard(),
             CAGSummaryCard(),
-            CagAbundanceHeatmap()
+            CagAbundanceHeatmap(),
+            AnnotationHeatmapCard(),
         ]
 
     # Key the analysis by `short_name`
@@ -624,12 +625,6 @@ class GLAM_LAYOUT:
         # Get the URI for the dataset
         dataset_uri = self.glam_db.get_dataset_uri(dataset_id)
 
-        # Read the manifest in order to render the card
-        manifest_df = self.glam_io.get_manifest(dataset_uri)
-
-        # Get the list of parameters available
-        parameter_list = self.glam_io.get_parameter_list(dataset_uri)
-
         return [
             # At the top of the dataset display is a banner with the dataset name
             self.dataset_button(
@@ -638,10 +633,14 @@ class GLAM_LAYOUT:
             ),
             # Below that is a card with the analysis itself            
             self.analysis_dict(dataset_id)[analysis_name].card(
+                # ID for this dataset
                 dataset_id, 
+                # Location to read data from
+                dataset_uri,
+                # Search string contains all parameters needed to render the card
                 search_string,
-                manifest_df,
-                parameter_list,
+                # Pass in the GLAM_IO object so that needed data can be read
+                self.glam_io
             )
         ]
 
@@ -1056,7 +1055,10 @@ class RichnessCard(AnalysisCard):
             log_x="on"
         )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1095,7 +1097,7 @@ class RichnessCard(AnalysisCard):
                         label="Color By",
                         options={
                             f: f
-                            for f in ["none"] + [f for f in metadata_df.columns.values if f != "Unnamed: 0"]
+                            for f in ["none"] + [f for f in manifest_df.columns.values if f != "Unnamed: 0"]
                         },
                         key="metadata",
                     ) + self.dropdown_menu(
@@ -1147,7 +1149,7 @@ class ExperimentSummaryCard(AnalysisCard):
         self.plot_list = []
         self.defaults = dict()
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
         # Parse the search string, while setting default arguments for this card
         # (while there are no arguments here, we need this to keep n={})
@@ -1196,7 +1198,10 @@ class SingleSampleCard(AnalysisCard):
             sample="none",
         )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1205,7 +1210,7 @@ class SingleSampleCard(AnalysisCard):
 
         # If there is no default sample, use the first one in the list
         if self.args["sample"] == "none":
-            self.args["sample"] = metadata_df.index.values[0]
+            self.args["sample"] = manifest_df.index.values[0]
 
         # Set the dataset ID (used to render card components)
         self.dataset_id = dataset_id
@@ -1224,7 +1229,7 @@ class SingleSampleCard(AnalysisCard):
                         label='Select Sample',
                         options={
                             specimen_name: specimen_name
-                            for specimen_name in metadata_df.index.values
+                            for specimen_name in manifest_df.index.values
                         },
                         key="sample"
                     ) + self.dropdown_menu(
@@ -1232,7 +1237,7 @@ class SingleSampleCard(AnalysisCard):
                         options={
                             **{
                                 specimen_name: specimen_name
-                                for specimen_name in metadata_df.index.values
+                                for specimen_name in manifest_df.index.values
                             },
                             **{
                                 "cag_size": "CAG Size"
@@ -1317,7 +1322,10 @@ class OrdinationCard(AnalysisCard):
                 description="Adjust the degree of clustering by t-SNE"
             )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1359,7 +1367,7 @@ class OrdinationCard(AnalysisCard):
                             "none": "None",
                             **{
                                 k: k
-                                for k in metadata_df.columns.values
+                                for k in manifest_df.columns.values
                             }
                         },
                         key="color_by",
@@ -1412,7 +1420,7 @@ class CAGSummaryCard(AnalysisCard):
             histogram_nbins = 50,
         )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1515,7 +1523,13 @@ class CagAbundanceHeatmap(AnalysisCard):
             annot_tax = "none",
         )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
+
+        # Get the list of parameters available
+        parameter_list = glam_io.get_parameter_list(dataset_uri)
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1557,6 +1571,7 @@ class CagAbundanceHeatmap(AnalysisCard):
                             variable_type = int,
                             min_value = 5,
                             max_value = 100,
+                            description = ""
                         ),
                         width = 4,
                     ),
@@ -1587,7 +1602,7 @@ class CagAbundanceHeatmap(AnalysisCard):
                             options = {
                                 **{
                                     col_name: col_name
-                                    for col_name in metadata_df.columns.values
+                                    for col_name in manifest_df.columns.values
                                 }
                             }
                         ) + self.dropdown_menu(
@@ -1652,6 +1667,149 @@ Note: Click on the camera icon at the top of this plot (or any on this page) to 
 # / CAG ABUNDANCE HEATMAP CARD #
 ################################
 
+################################
+# CARD ANNOTATION HEATMAP CARD #
+################################
+class AnnotationHeatmapCard(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Annotations of Multiple CAGs (heatmap)"
+        self.short_name = "cag_annot_heatmap"
+        self.plot_list = []
+        self.defaults = dict(
+            select_cags_by="abundance",
+            ncags=20,
+            min_cag_size=5,
+            max_cag_size=0,
+            annot_type="taxonomic",
+            nannots=40,
+        )
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Get the list of parameters available
+        parameter_list = glam_io.get_parameter_list(dataset_uri)
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        # Set up the annotation options available for this dataset
+        annot_type_options = {
+            "taxonomic": "Taxonomic",
+            "species": "Species",
+            "genus": "Genus",
+            "family": "Family",
+        }
+
+        # If this dataset has genome annotations, add that option
+        if glam_io.has_genomes(dataset_uri):
+            annot_type_options["genomes"] = "Genomes"
+
+        # If this dataset has functional annotations, add that option
+        if glam_io.has_functional_annotations(dataset_uri):
+            annot_type_options["eggNOG_desc"] = "Functional"
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    dbc.Col(
+                        # Wrapper around the spinner and 'editable' functionality for a given graph
+                        self.plot_div(
+                            # The plot ID used below corresponds to a plot defined in GLAMPlotting
+                            "cag-annot-heatmap"
+                        )
+                    )
+                ]),
+                dbc.Row([
+                    dbc.Col(
+                        self.dropdown_menu(
+                            label="Select CAGs By",
+                            options={
+                                "abundance": "Average Relative Abundance",
+                                "size": "Size (Number of Genes)",
+                                **{
+                                    f"parameter::{p}": f"Association with {p}"
+                                    for p in parameter_list
+                                }
+                            },
+                            key="select_cags_by"
+                        ) + self.input_field(
+                            label="Number of CAGs to Display",
+                            description="",
+                            key="ncags",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=5,
+                            max_value=100,
+                        ),
+                        width=4,
+                    ),
+                    dbc.Col(
+                        self.dropdown_menu(
+                            label="Annotation Type",
+                            options=annot_type_options,
+                            key="annot_type"
+                        ) + self.input_field(
+                            label="Number of Annotations to Display",
+                            description="",
+                            key="nannots",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=5,
+                            max_value=100,
+                        ),
+                        width=4,
+                    ),
+                    dbc.Col(
+                        self.input_field(
+                            label="Minimum CAG size",
+                            description="Only display CAGs which contain at least this number of genes",
+                            key="min_cag_size",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=1,
+                            max_value=100000,
+                        ) + self.input_field(
+                            label="Maximum CAG size",
+                            description="Only display CAGs which contain at most this number of genes (0 for no limit)",
+                            key="max_cag_size",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=0,
+                            max_value=100000,
+                        ),
+                        width=4,
+                        align="center",
+                    )
+                ])
+            ],
+            help_text="""
+This display lets you compare the taxonomic or functional annotations of a group of CAGs.
+
+You may choose to view those CAGs which are most highly abundant, those CAGs containing the
+largest number of genes, or those CAGs which are most consistently associated with a parameter
+in your formula (if provided).
+
+If you decide to display those CAGs which are most associated with a parameter in the formula,
+then you will see the estimated coefficient of association for each CAG against that parameter
+displayed to the right of the heatmap. In addition, you will see the aggregate association of
+each selected annotation against that same parameter from the formula.
+
+The controls at the top of the display help you customize this heatmap. You may choose to include
+a greater or smaller number of CAGs; you may choose to filter CAGs based on their size (the
+number of genes in each CAG); and you may choose to display either taxonomic or functional annotations.
+
+Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
+            """
+        )
+
 #################
 # CARD TEMPLATE #
 #################
@@ -1661,12 +1819,18 @@ class CardTemplate(AnalysisCard):
 
         self.long_name = ""
         self.short_name = ""
-
+        self.plot_list = []
         self.defaults = dict(
 
         )
 
-    def card(self, dataset_id, search_string, metadata_df, parameter_list):
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
+
+        # Get the list of parameters available
+        parameter_list = glam_io.get_parameter_list(dataset_uri)
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1767,22 +1931,6 @@ class CardTemplate(AnalysisCard):
 #             ]),
 #         ],
 #         help_text="""
-# This display lets you compare the taxonomic or functional annotations of a group of CAGs.
-
-# You may choose to view those CAGs which are most highly abundant, those CAGs containing the
-# largest number of genes, or those CAGs which are most consistently associated with a parameter
-# in your formula (if provided).
-
-# If you decide to display those CAGs which are most associated with a parameter in the formula,
-# then you will see the estimated coefficient of association for each CAG against that parameter
-# displayed to the right of the heatmap. In addition, you will see the aggregate association of
-# each selected annotation against that same parameter from the formula.
-
-# The controls at the top of the display help you customize this heatmap. You may choose to include
-# a greater or smaller number of CAGs; you may choose to filter CAGs based on their size (the
-# number of genes in each CAG); and you may choose to display either taxonomic or functional annotations.
-
-# Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
 #         """
 # )
 # #################################
