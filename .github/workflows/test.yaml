@@ -40,7 +40,6 @@ jobs:
         env:
           DB_PORT: ${{ job.services.mariadb.ports[3306] }}
         run: |
-          mysqld_safe
           glam-cli setup
           glam-cli add-user --username testUser --email testUser@email.com
           glam-cli set-password --username testUser --password testUserPassword
