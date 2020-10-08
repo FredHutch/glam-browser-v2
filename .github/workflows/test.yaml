@@ -23,19 +23,31 @@ jobs:
       DB_NAME: 'glamDB'
       DB_USERNAME: 'testAdmin'
       DB_PASSWORD: 'testPassword'
-      DB_HOST: 'mariadb'
+      DB_HOST: '127.0.0.1'
     steps:
+
       - name: Set up Python3.8
         uses: actions/setup-python@v2
         with:
           python-version: '3.8'
+
       - name:  Checkout repository
         uses: actions/checkout@v1
+
       - name: Install GLAM CLI
         run: |        
           python3 -m pip install setuptools
           python3 -m pip install wheel
           python3 -m pip install .
+      
+      - name: Verify MariaDB connection
+        env:
+          PORT: ${{ job.services.mariadb.ports[3306] }}
+        run: |
+          while ! mysqladmin ping -h"127.0.0.1" -P"$PORT" --silent; do
+            sleep 1
+          done
+          
       - name:  Set up database
         env:
           DB_PORT: ${{ job.services.mariadb.ports[3306] }}
