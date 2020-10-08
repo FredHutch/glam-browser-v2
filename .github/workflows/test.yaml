@@ -22,6 +22,7 @@ jobs:
       - name: Install GLAM CLI
         run: |        
           python3 -m pip install setuptools
+          python3 -m pip install wheel
           python3 -m pip install .
       - name:  Start MariaDB
         uses: getong/mariadb-action@v1.1
