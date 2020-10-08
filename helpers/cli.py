@@ -14,7 +14,8 @@ def open_glam_db(args):
         db_port=args.db_port,
     )
 
-if __name__ == "__main__":
+def main():
+    """Entrypoint for the CLI."""
 
     # Set up logging
     logFormatter = logging.Formatter(
@@ -126,3 +127,9 @@ if __name__ == "__main__":
 
     # Run the command which is linked to the selected subcommand
     args.func(args)
+
+
+if __name__ == "__main__":
+
+    # Run the main entrypoint
+    main()
