@@ -4,5 +4,15 @@ services:
     ports:
       - "8050:8050"
     image: quay.io/fhcrc-microbiome/glam:latest
-    volumes:
-      - "./data:/share"
+
+    environment:
+      - DB_NAME
+      - DB_USERNAME
+      - DB_PASSWORD
+      - DB_HOST
+      - DB_PORT
+      - S3_BUCKET
+      - AWS_PROFILE
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_REGION
