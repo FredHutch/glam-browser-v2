@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Command line utility to modify the GLAM Browser database."""
 import argparse
-from helpers.db import GLAM_DB
+from .db import GLAM_DB
 import logging
 import os
 
@@ -14,7 +14,8 @@ def open_glam_db(args):
         db_port=args.db_port,
     )
 
-if __name__ == "__main__":
+def main():
+    """Entrypoint for the CLI."""
 
     # Set up logging
     logFormatter = logging.Formatter(
@@ -110,15 +111,14 @@ if __name__ == "__main__":
     parser_grant_access.add_argument("--user-name", type=str, help="Name of user")
     parser_grant_access.add_argument("--dataset-name", type=str, help="Name of dataset")
     parser_grant_access.set_defaults(
-        func=lambda args: open_glam_db(args).grant_access(user_name=args.user_name, dataset_name=args.dataset_name)
+        func=lambda args: open_glam_db(args).grant_access(user=args.user_name, dataset=args.dataset_name)
     )
 
     # DUMP TABLE CONTENTS
     parser_grant_access = subparsers.add_parser("dump-table", help="Print the contents of any table")
-    parser_grant_access.add_argument("--user", type=str, help="Name of user")
-    parser_grant_access.add_argument("--dataset", type=str, help="Name of dataset")
+    parser_grant_access.add_argument("--table", type=str, help="Name of the table to read")
     parser_grant_access.set_defaults(
-        func=lambda args: open_glam_db(args).grant_access(user=args.user_name, dataset=args.dataset_name)
+        func=lambda args: print(open_glam_db(args).read_table(args.table))
     )
 
     # Parse the arguments
@@ -126,3 +126,9 @@ if __name__ == "__main__":
 
     # Run the command which is linked to the selected subcommand
     args.func(args)
+
+
+if __name__ == "__main__":
+
+    # Run the main entrypoint
+    main()

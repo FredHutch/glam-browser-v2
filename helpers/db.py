@@ -87,25 +87,25 @@ class GLAM_DB:
         """Set up all of the tables in the database that we need."""
 
         # Connect to the database and open a cursor
-        with self.mysql_engine.cursor() as mycursor:
-        
-            # `user`: name, password, email
-            mycursor.execute("""CREATE TABLE IF NOT EXISTS user(name VARCHAR(40) NOT NULL UNIQUE, password VARCHAR(40) NOT NULL, email VARCHAR(255) NOT NULL);""")
+        mycursor = self.mysql_engine.cursor()
+    
+        # `user`: name, password, email
+        mycursor.execute("""CREATE TABLE IF NOT EXISTS user(name VARCHAR(40) NOT NULL UNIQUE, password VARCHAR(40) NOT NULL, email VARCHAR(255) NOT NULL);""")
 
-            # `dataset`: id, uri
-            mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset(id VARCHAR(100) NOT NULL UNIQUE, uri VARCHAR(255) NOT NULL UNIQUE, name VARCHAR(255) NOT NULL);""")
+        # `dataset`: id, uri
+        mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset(id VARCHAR(100) NOT NULL UNIQUE, uri VARCHAR(255) NOT NULL UNIQUE, name VARCHAR(255) NOT NULL);""")
 
-            # `dataset_access`: dataset_id, user_name
-            mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset_access(dataset_id VARCHAR(100) NOT NULL UNIQUE, user_name VARCHAR(40) NOT NULL UNIQUE);""")
+        # `dataset_access`: dataset_id, user_name
+        mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset_access(dataset_id VARCHAR(100) NOT NULL UNIQUE, user_name VARCHAR(40) NOT NULL UNIQUE);""")
 
-            # `dataset_public`: dataset_id
-            mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset_public(dataset_id VARCHAR(100) NOT NULL UNIQUE);""")
+        # `dataset_public`: dataset_id
+        mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset_public(dataset_id VARCHAR(100) NOT NULL UNIQUE);""")
 
-            # `user_bookmark`: name, bookmark, bookmark_order
-            mycursor.execute("""CREATE TABLE IF NOT EXISTS user_bookmark(name VARCHAR(40) NOT NULL, bookmark VARCHAR(255) NOT NULL, bookmark_name VARCHAR(255) NOT NULL, bookmark_order INT(2) NOT NULL);""")
+        # `user_bookmark`: name, bookmark, bookmark_order
+        mycursor.execute("""CREATE TABLE IF NOT EXISTS user_bookmark(name VARCHAR(40) NOT NULL, bookmark VARCHAR(255) NOT NULL, bookmark_name VARCHAR(255) NOT NULL, bookmark_order INT(2) NOT NULL);""")
 
-            # Commit all changes
-            self.mysql_engine.commit()
+        # Commit all changes
+        self.mysql_engine.commit()
 
     def read_table(self, table_name, check_cache=True):
         if check_cache and self.cache.get(table_name) is not None:
