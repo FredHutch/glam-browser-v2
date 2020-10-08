@@ -13,8 +13,13 @@ jobs:
       DB_HOST: 'localhost'
       DB_PORT: 3800
     steps:
-      - uses: actions/checkout@v1
-      - name: Install CLI
+      - name: Set up Python3.8
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.8'
+      - name:  Checkout repository
+        uses: actions/checkout@v1
+      - name: Install GLAM CLI
         run: |        
           python3 -m pip install setuptools
           python3 -m pip install .
