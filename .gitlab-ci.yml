@@ -18,6 +18,7 @@ build_test:
           -e DB_PASSWORD=$DB_PASSWORD
           -e DB_HOST=$DB_HOST
           -e DB_PORT=$DB_PORT
+          -e S3_BUCKET=$S3_BUCKET
           -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
           -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
           -e AWS_REGION=$AWS_REGION
@@ -34,9 +35,9 @@ deploy:
   stage: deploy
   only:
     refs:
-       - cleansheet # TODO FIXME change to master at some point
+       - master
   script:
-    - AWS_ACCESS_KEY_ID=$ECR_ACCESS_KEY AWS_SECRET_ACCESS_KEY=$ECR_SECRET_KEY AWS_DEFAULT_REGION=$ECR_REGION aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin dockerimages.fhcrc.org
+    - docker login --username $DOCKERIMAGES_USER --password $DOCKERIMAGES_PASS https://dockerimages.fhcrc.org
     - docker push dockerimages.fhcrc.org/glam-browser-v2:latest
     - sleep 15
     - rancher-v0.6.2/rancher --url https://ponderosa.fhcrc.org --access-key $RANCHERAPI_KEY --secret-key $RANCHERAPI_SECRET up -d --pull --force-upgrade --confirm-upgrade --stack glam-browser-v2 --file docker-compose.yml --rancher-file rancher-compose.yml
