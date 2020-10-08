@@ -14,9 +14,9 @@ jobs:
       DB_PORT: 3800
     steps:
       - uses: actions/checkout@v1
-      - name: Build Docker image
+      - name: Install CLI
         run: |
-          docker build -t glam .
+          python3 -m pip install .
       - name:  Start MariaDB
         uses: getong/mariadb-action@v1.1
         with:
@@ -30,8 +30,8 @@ jobs:
           mysql password: 'testPassword' # Required if "mysql user" exists. The password for the "mysql user"
       - name:  Set up database
         run: |
-          docker run glam cli setup
-          docker run glam cli add-user --username testUser --email testUser@email.com
-          docker run glam cli set-password --username testUser --password testUserPassword
-          docker run glam cli add-dataset --dataset-id dataset_id --name dataset_name --uri s3://glam-datasets/dataset_id/
-          docker run glam cli grant-access --user testUser --dataset dataset_id
+          glam-cli setup
+          glam-cli add-user --username testUser --email testUser@email.com
+          glam-cli set-password --username testUser --password testUserPassword
+          glam-cli add-dataset --dataset-id dataset_id --name dataset_name --uri s3://glam-datasets/dataset_id/
+          glam-cli grant-access --user testUser --dataset dataset_id
