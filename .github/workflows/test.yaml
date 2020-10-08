@@ -15,7 +15,8 @@ jobs:
     steps:
       - uses: actions/checkout@v1
       - name: Install CLI
-        run: |
+        run: |        
+          python3 -m pip install setuptools
           python3 -m pip install .
       - name:  Start MariaDB
         uses: getong/mariadb-action@v1.1
