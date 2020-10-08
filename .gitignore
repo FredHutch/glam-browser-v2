@@ -46,6 +46,7 @@ venv/
 
 # Python files
 helpers/__pycache__/
+glam_browser_v2_cli_sminot*
 
 *.hdf5
 *.hdf5.lock

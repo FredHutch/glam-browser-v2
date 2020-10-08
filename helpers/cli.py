@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Command line utility to modify the GLAM Browser database."""
 import argparse
-from helpers.db import GLAM_DB
+from .db import GLAM_DB
 import logging
 import os
 
