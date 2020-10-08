@@ -105,17 +105,17 @@ server = app.server
 # ADD THE GTM CONTAINER, IF PROVIDED
 gtm_container = os.getenv("GTM_CONTAINER")
 if gtm_container is not None and isinstance(gtm_container, str) and gtm_container.startswith("GTM-"):
-    app.index_string = '''<!DOCTYPE html>
+    app.index_string = """<!DOCTYPE html>
 <html>
     <head>
     {%metas%}
         <title>{%title%}</title>
         {%favicon%}
         {%css%}
-        <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','GTM-N4XKFR5');</script>
+        <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','""" + gtm_container + """');</script>
     </head>
     <body>
-<noscript><iframe src="https://www.googletagmanager.com/ns.html?id={}"
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=""" + gtm_container + """"
 height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         {%app_entry%}
         <footer>
@@ -125,7 +125,7 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
         </footer>
     </body>
 </html>
-'''.format(gtm_container)
+"""
 
 # Run the app
 if __name__ == '__main__':
