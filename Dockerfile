@@ -15,15 +15,11 @@ RUN pip3 install -r /home/dash/requirements.txt && \
 ## RUN pip3 uninstall -y numcodecs # make sure
 ## RUN pip3 install -v --no-cache-dir --no-binary numcodecs numcodecs==0.7.1
 RUN useradd -u 5555 -m -d /home/dash -c "dash user" dash
-ADD app.py /home/dash/
-# Install the CLI
-RUN python3 -m pip install .
-RUN ln -s /home/dash/cli.py /usr/local/bin/cli
-ADD glam-start.sh /home/dash
-ADD helpers/ /home/dash/helpers/
-ADD share/ /share/
+ADD . /home/dash/
 RUN chown -R dash:dash /home/dash 
 WORKDIR /home/dash
+# Install the CLI
+RUN python3 -m pip install .
 EXPOSE 8050
 ENV DATA_FOLDER=/share
 ARG DB_NAME
