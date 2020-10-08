@@ -10,6 +10,7 @@ dash-renderer==1.4.0
 dash-table==4.6.2
 expiringdict
 h5py
+mysql
 tables
 scikit-learn
 sqlalchemy

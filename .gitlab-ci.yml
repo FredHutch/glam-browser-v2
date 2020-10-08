@@ -5,11 +5,11 @@ before_script:
   
 build_test:
   script:
-    - docker build --no-cache -t 458818213009.dkr.ecr.us-west-2.amazonaws.com/glam:latest .
+    - docker build --no-cache -t dockerimages.fhcrc.org/glam-browser-v2:latest .
     - |
-        if docker ps -a|tr -s ' '|rev|cut -d ' ' -f 1|rev|grep -q glam
+        if docker ps -a|tr -s ' '|rev|cut -d ' ' -f 1|rev|grep -q glam-browser-v2
         then
-        docker stop glam && docker rm --force glam
+        docker stop glam-browser-v2 && docker rm --force glam-browser-v2
         fi
     - >-
         docker run 
@@ -23,12 +23,12 @@ build_test:
           -e AWS_REGION=$GLAM_AWS_REGION
           -e GTM_CONTAINER=$GLAM_GTM_CONTAINER
           -d 
-          --name glam 
+          --name glam-browser-v2 
           -p 8050:8050 
-          458818213009.dkr.ecr.us-west-2.amazonaws.com/glam:latest
+          dockerimages.fhcrc.org/glam-browser-v2:latest
     - sleep 60
     - curl -I http://localhost:8050 | grep -q "HTTP/1.1 200 OK"
-    - docker stop glam && docker rm --force glam 
+    - docker stop glam-browser-v2 && docker rm --force glam-browser-v2 
   
 deploy:
   stage: deploy
@@ -36,8 +36,8 @@ deploy:
     refs:
        - cleansheet # TODO FIXME change to master at some point
   script:
-    - AWS_ACCESS_KEY_ID=$ECR_ACCESS_KEY AWS_SECRET_ACCESS_KEY=$ECR_SECRET_KEY AWS_DEFAULT_REGION=$ECR_REGION aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin 458818213009.dkr.ecr.us-west-2.amazonaws.com
-    - docker push 458818213009.dkr.ecr.us-west-2.amazonaws.com/glam:latest
+    - AWS_ACCESS_KEY_ID=$ECR_ACCESS_KEY AWS_SECRET_ACCESS_KEY=$ECR_SECRET_KEY AWS_DEFAULT_REGION=$ECR_REGION aws ecr get-login-password --region us-west-2 | docker login --username AWS --password-stdin dockerimages.fhcrc.org
+    - docker push dockerimages.fhcrc.org/glam-browser-v2:latest
     - sleep 15
-    - rancher-v0.6.2/rancher --url https://ponderosa.fhcrc.org --access-key $RANCHERAPI_KEY --secret-key $RANCHERAPI_SECRET up -d --pull --force-upgrade --confirm-upgrade --stack glam --file docker-compose.yml --rancher-file rancher-compose.yml
+    - rancher-v0.6.2/rancher --url https://ponderosa.fhcrc.org --access-key $RANCHERAPI_KEY --secret-key $RANCHERAPI_SECRET up -d --pull --force-upgrade --confirm-upgrade --stack glam-browser-v2 --file docker-compose.yml --rancher-file rancher-compose.yml
   

@@ -55,3 +55,4 @@ testing/
 .nextflow/*
 work/
 manifests/
+.env
