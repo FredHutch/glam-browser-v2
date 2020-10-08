@@ -13,15 +13,15 @@ build_test:
         fi
     - >-
         docker run 
-          -e DB_NAME=$GLAM_DB_NAME
-          -e DB_USERNAME=$GLAM_DB_USERNAME
-          -e DB_PASSWORD=$GLAM_DB_PASSWORD
-          -e DB_HOST=$GLAM_DB_HOST
-          -e DB_PORT=$GLAM_DB_PORT
-          -e AWS_ACCESS_KEY_ID=$GLAM_AWS_ACCESS_KEY_ID
-          -e AWS_SECRET_ACCESS_KEY=$GLAM_AWS_SECRET_ACCESS_KEY
-          -e AWS_REGION=$GLAM_AWS_REGION
-          -e GTM_CONTAINER=$GLAM_GTM_CONTAINER
+          -e DB_NAME=$DB_NAME
+          -e DB_USERNAME=$DB_USERNAME
+          -e DB_PASSWORD=$DB_PASSWORD
+          -e DB_HOST=$DB_HOST
+          -e DB_PORT=$DB_PORT
+          -e AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+          -e AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+          -e AWS_REGION=$AWS_REGION
+          -e GTM_CONTAINER=$GTM_CONTAINER
           -d 
           --name glam-browser-v2 
           -p 8050:8050 
