@@ -1,11 +1,44 @@
 version: '2'
 services:
-  glam:
+  glam-browser-v2:
     ports:
       - "8050:8050"
-    image: 458818213009.dkr.ecr.us-west-2.amazonaws.com/glam:latest
+    image: dockerimages.fhcrc.org/glam-browser-v2:latest
+    command: /home/dash/glam-start.sh
 
     labels:
       io.rancher.container.pull_image: always
 
-    restart: always  
+    restart: always
+
+    secrets:
+      - GLAM2_DB_NAME
+      - GLAM2_DB_USERNAME
+      - GLAM2_DB_PASSWORD
+      - GLAM2_DB_HOST
+      - GLAM2_DB_PORT
+      - GLAM2_AWS_ACCESS_KEY_ID
+      - GLAM2_AWS_SECRET_ACCESS_KEY
+      - GLAM2_AWS_REGION
+      - GLAM2_GTM_CONTAINER
+  
+secrets:
+  GLAM2_DB_NAME:
+    external: true
+  GLAM2_DB_USERNAME:
+    external: true
+  GLAM2_DB_PASSWORD:
+    external: true
+  GLAM2_DB_HOST:
+    external: true
+  GLAM2_DB_PORT:
+    external: true
+  GLAM2_AWS_ACCESS_KEY_ID:
+    external: true
+  GLAM2_AWS_SECRET_ACCESS_KEY:
+    external: true
+  GLAM2_AWS_REGION:
+    external: true
+  GLAM2_GTM_CONTAINER:
+    external: true
+                                                          
