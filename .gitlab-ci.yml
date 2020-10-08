@@ -5,7 +5,7 @@ before_script:
   
 build_test:
   script:
-    - docker build --no-cache -t dockerimages.fhcrc.org/glam-browser-v2:latest .
+    - docker build -t dockerimages.fhcrc.org/glam-browser-v2:latest .
     - |
         if docker ps -a|tr -s ' '|rev|cut -d ' ' -f 1|rev|grep -q glam-browser-v2
         then
