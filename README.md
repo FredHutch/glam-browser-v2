@@ -112,7 +112,7 @@ approriate environment variables as described above (e.g. `source glam-browser-v
 
 #### Starting Up
 
-With all of the data and configuration in place, you can launch the GLAM Browser withthe
+With all of the data and configuration in place, you can launch the GLAM Browser with the
 command:
 
 ```#!/bin/bash
