@@ -2,6 +2,7 @@
 """Command line utility to modify the GLAM Browser database."""
 import argparse
 from .db import GLAM_DB
+from .index import GLAM_INDEX
 import logging
 import os
 
@@ -13,6 +14,12 @@ def open_glam_db(args):
         db_host=args.db_host,
         db_port=args.db_port,
     )
+
+def glam_index(fp=None, uri=None):
+    GLAM_INDEX(
+        input_hdf=fp,
+        output_base=uri,
+    ).index()
 
 def main():
     """Entrypoint for the CLI."""
@@ -93,7 +100,7 @@ def main():
     parser_index_dataset.add_argument("--fp", type=str, help="Path to input dataset in HDF5 format")
     parser_index_dataset.add_argument("--uri", type=str, help="Path to output dataset in AWS S3")
     parser_index_dataset.set_defaults(
-        func=lambda args: open_glam_db(args).index_dataset(fp=args.fp, uri=args.uri)
+        func=lambda args: glam_index(fp=args.fp, uri=args.uri)
     )
 
 
