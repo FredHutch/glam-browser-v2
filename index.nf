@@ -18,12 +18,11 @@ nextflow.preview.dsl=2
 // If these are not set by the user, then they will be set to the values below
 // This is useful for the if/then control syntax below
 params.input = false
-params.output_folder = false
 params.output_prefix = false
 params.help = false
 
 // Set the containers to user
-container__pandas = "quay.io/fhcrc-microbiome/python-pandas:v1.0.3_py38_h5py"
+container__glam = "quay.io/fhcrc-microbiome/glam-browser-v2:latest"
 
 // Function which prints help message text
 def helpMessage() {
@@ -34,14 +33,13 @@ def helpMessage() {
     
     Arguments:
       --input               Geneshot results (".hdf5") file to process
-      --output_folder       Folder for output GLAM index
-      --output_prefix       Prefix used to name the GLAM index (".index.hdf5" will be appended)
+      --output_prefix       Location in AWS S3 to write out indexed file objects
 
     """.stripIndent()
 }
 
 // Show help message if the user specifies the --help flag at runtime
-if (params.help || params.input == false || params.output_folder == false || params.output_prefix == false){
+if (params.help || params.input == false || params.output_prefix == false){
     // Invoke the function above which prints the help message
     helpMessage()
     // Exit out and do not run anything else
@@ -50,58 +48,25 @@ if (params.help || params.input == false || params.output_folder == false || par
 
 // Make CAGs for each set of samples, with the subset of genes for this shard
 process indexGeneshotResults {
-    container "${container__pandas}"
+    container "${container__glam}"
     label "mem_veryhigh"
     errorStrategy 'retry'
 
     input:
     path input_hdf
 
-    output:
-    file "${params.output_prefix}.index.hdf5"
-
     """#!/bin/bash
 
-index.py ${input_hdf} ${params.output_prefix}.index.hdf5
+glam-cli index-dataset --fp "${input_hdf}" --uri "${params.output_prefix}"
 
     """
 }
-
-// Repack an HDF5 file
-process repackHDF {
-
-    container "${container__pandas}"
-    label "mem_medium"
-    publishDir "${params.output_folder}", mode: "copy", overwrite: true
-    
-    input:
-    file output_hdf5
-        
-    output:
-    file "${output_hdf5}"
-
-    """
-#!/bin/bash
-
-set -e
-
-[ -s ${output_hdf5} ]
-
-h5repack -f GZIP=5 ${output_hdf5} TEMP && mv TEMP ${output_hdf5}
-    """
-}
-
 
 workflow {
 
   // Index the input file
   indexGeneshotResults(
     Channel.fromPath(params.input)
-  )
-
-  // Repack the output file
-  repackHDF(
-    indexGeneshotResults.out
   )
 
 }
