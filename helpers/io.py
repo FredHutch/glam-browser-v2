@@ -206,6 +206,9 @@ class GLAM_IO:
             )
         ]
 
+    def has_parameters(self, base_path):
+        return len(self.get_parameter_list(base_path)) > 0
+
     def get_cag_associations(self, base_path, parameter_name):
         df = self.read_item(
             os.path.join(base_path, "cag_associations/"), 
