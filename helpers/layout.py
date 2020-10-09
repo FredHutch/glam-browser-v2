@@ -603,6 +603,7 @@ class GLAM_LAYOUT:
             CagAbundanceHeatmap(),
             AnnotationHeatmapCard(),
             VolcanoCard() if self.glam_io.has_parameters(dataset_uri) else None,
+            PlotCagCard(),
         ]
 
     # Key the analysis by `short_name`
@@ -1961,6 +1962,120 @@ Note: Click on the camera icon at the top of this plot (or any on this page) to 
         )
 
 #################
+# PLOT CAG CARD #
+#################
+class PlotCagCard(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Plot Individual CAG Abundance"
+        self.short_name = "plot_cag"
+        self.plot_list = []
+        self.defaults = dict(
+            plot_type = "scatter",
+            log10 = "on",
+            color_by = None,
+            facet = None,
+        )
+        self.dynamic_defaults = dict(
+            cag_id = lambda glam_io, dataset_uri: glam_io.get_cag_annotations(
+                dataset_uri
+            ).sort_values(
+                by="mean_abundance"
+            ).index.values[-1],
+            xaxis = lambda glam_io, dataset_uri: [
+                col_name
+                for col_name in glam_io.get_manifest(dataset_uri).columns.values
+                if col_name not in ["R1", "R2"]
+            ][0]
+        )
+
+        self.help_text = """
+Construct a summary of the abundance of a single CAG in relation to the metadata
+assigned to each specimen. By selecting different types of plots, you may flexibly
+construct any type of summary display.
+
+The taxonomic annotation of a given CAG is shown as the proportion of
+genes which contain a given taxonomic annotation, out of all genes which
+were given any taxonomic annotation.
+
+Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
+        """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
+        manifest_options = {
+            col_name: col_name
+            for col_name in manifest_df.columns.values
+            if col_name not in ["R1", "R2"]
+        }
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    dbc.Col(
+                        self.plot_div(
+                            "single-cag-graph"
+                        ),
+                        width=8
+                    ),
+                    dbc.Col(
+                        self.input_field(
+                            label="CAG ID",
+                            description="Select a CAG to display",
+                            key="cag_id",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=0,
+                            max_value=250000,
+                        ) + self.dropdown_menu(
+                            label="X-axis",
+                            key="xaxis",
+                            options=manifest_options
+                        ) + self.dropdown_menu(
+                            label="Plot Type",
+                            key="plot_type",
+                            options={
+                                "scatter": "Points",
+                                "line": "Line",
+                                "boxplot": "Boxplot",
+                                "strip": "Stripplot",
+                            }
+                        ) + self.dropdown_menu(
+                            label="Color",
+                            key="color_by",
+                            options=manifest_options
+                        ) + self.dropdown_menu(
+                            label="Facet",
+                            key="facet",
+                            options=manifest_options
+                        ) + self.dropdown_menu(
+                            label="Log Scale",
+                            key="log10",
+                            options={
+                                "on": "On",
+                                "off": "Off"
+                            }
+                        ),
+                        width=4
+                    )
+                ])
+            ],
+        )
+
+
+#################
 # CARD TEMPLATE #
 #################
 class CardTemplate(AnalysisCard):
@@ -1980,9 +2095,6 @@ class CardTemplate(AnalysisCard):
         # Read the manifest in order to render the card
         manifest_df = glam_io.get_manifest(dataset_uri)
 
-        # Get the list of parameters available
-        parameter_list = glam_io.get_parameter_list(dataset_uri)
-
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
             search_string, **self.defaults
@@ -1995,251 +2107,6 @@ class CardTemplate(AnalysisCard):
             dataset_id,
             [],
         )
-
-################
-# VOLCANO PLOT #
-################
-# def volcano_card():
-#     return card_wrapper(
-#         "Association Screening",
-#         dbc.Row([
-#             dbc.Col(
-#                 dbc.Spinner(dcc.Graph(
-#                             id='volcano-graph'
-#                             )),
-#                 width=8,
-#                 align="center"
-#             ),
-#             dbc.Col(
-#                 corncob_parameter_dropdown(
-#                     group="volcano-parameter",
-#                 ) + cag_size_slider(
-#                     "volcano-cag-size-slider"
-#                 ) + volcano_pvalue_slider(
-#                     group="volcano-parameter",
-#                 ) + log_scale_radio_button(
-#                     "volcano-fdr-radio",
-#                     label_text="FDR-BH adjustment"
-#                 ) + [
-#                     html.Br(),
-#                     html.Label("Compare Against"),
-#                     dcc.Dropdown(
-#                         id="corncob-comparison-parameter-dropdown",
-#                         options=[
-#                             {'label': 'Estimated Coefficient', 'value': 'coef'},
-#                         ],
-#                         value="coef"
-#                     ),
-#                     html.Div(id='volcano-selected-cag',
-#                              style={"display": "none"}),
-#                 ],
-#                 width=4,
-#                 align="center"
-#             )
-#         ]),
-#         help_text="""
-#         """
-#     )
-# ##################
-# # / VOLCANO PLOT #
-# ##################
-
-# ###################
-# # PLOT CAG CARD #
-# ###################
-# def plot_cag_card():
-#     return card_wrapper(
-#         "Plot CAG Abundance",
-#         [
-#             dbc.Row([
-#                 dbc.Col(
-#                     dbc.Spinner(
-#                         dcc.Graph(id="plot-cag-graph")
-#                     ),
-#                     width=8,
-#                     align="center",
-#                 ),
-#                 dbc.Col(
-#                     [
-#                         html.Label("Display CAG(s) By"),
-#                         dcc.Dropdown(
-#                             id="plot-cag-selection-type",
-#                             options=[
-#                                 {"label": "CAG ID", "value": "cag_id"},
-#                                 {"label": "Association & Annotation", "value": "association"},
-#                             ],
-#                             value="cag_id",
-#                         ),
-#                         html.Br(),
-#                         html.Div(
-#                             [
-#                                 html.Label("CAG ID", style={"margin-right": "15px"}),
-#                                 dcc.Input(
-#                                     id="plot-cag-multiselector",
-#                                     type="number",
-#                                     placeholder="<CAG ID>",
-#                                     debounce=True,
-#                                     min=0,
-#                                     max=1, # Will be updated by callbacks
-#                                     step=1
-#                                 ),
-#                                 html.Br(),
-#                             ], 
-#                             id="plot-cag-by-id-div"
-#                         ),
-#                         html.Div(
-#                             corncob_parameter_dropdown(
-#                                 group="plot-cag",
-#                             ) + [
-#                                 html.Label("Filter by Annotation"),
-#                                 dcc.Dropdown(
-#                                     id="plot-cag-annotation-multiselector",
-#                                     options=[],
-#                                     value=[],
-#                                     multi=True,
-#                                     placeholder="None"
-#                                 ),
-#                                 html.Br(),
-#                                 html.Label(
-#                                     "Number of CAGs", 
-#                                     style={"margin-right": "15px"}
-#                                 ),
-#                                 dcc.Input(
-#                                     id="plot-cag-annotation-ncags",
-#                                     type="number",
-#                                     placeholder="<NUM CAGs>",
-#                                     debounce=True,
-#                                     min=1,
-#                                     max=1000,
-#                                     step=1,
-#                                     value=5,
-#                                 ),
-#                                 html.Br(),
-#                             ],
-#                             id="plot-cag-by-association-div"
-#                         ),
-#                     ] + metadata_field_dropdown(
-#                         "plot-cag-xaxis",
-#                         label_text="X-axis",
-#                     ) + plot_type_dropdown(
-#                         "plot-cag-plot-type",
-#                         options=[
-#                             {'label': 'Points', 'value': 'scatter'},
-#                             {'label': 'Line', 'value': 'line'},
-#                             {'label': 'Boxplot', 'value': 'boxplot'},
-#                             {'label': 'Stripplot', 'value': 'strip'},
-#                         ]
-#                     ) + metadata_field_dropdown(
-#                         "plot-cag-color",
-#                         label_text="Color",
-#                     ) + metadata_field_dropdown(
-#                         "plot-cag-facet",
-#                         label_text="Facet",
-#                     ) + log_scale_radio_button(
-#                         "plot-cag-log"
-#                     ),
-#                     width=4,
-#                     align="center",
-#                 )
-#             ]),
-#             dbc.Row([
-#                 dbc.Col(width=1),
-#                 dbc.Col(
-#                     [
-#                         dbc.Spinner(
-#                             dcc.Graph(
-#                                 id="cag-tax-graph"
-#                             )
-#                         ),
-#                         html.Br(),
-#                         html.Br(),
-#                         html.Div(
-#                             dash_table.DataTable(
-#                                 id='cag-function-table',
-#                                 columns=[
-#                                     {"name": "Functional Label (from eggNOG)", "id": "label"}
-#                                 ],
-#                                 data=pd.DataFrame([
-#                                     {"label": "none"}
-#                                 ]).to_dict("records"),
-#                                 style_table={
-#                                     'minWidth': '75%',
-#                                 },
-#                                 style_header={
-#                                     "backgroundColor": "rgb(2,21,70)",
-#                                     "color": "white",
-#                                     "textAlign": "center",
-#                                 },
-#                                 page_action='native',
-#                                 page_size=10,
-#                                 filter_action='native',
-#                                 sort_action='native',
-#                                 hidden_columns=[],
-#                                 css=[{"selector": ".show-hide",
-#                                     "rule": "display: none"}],
-#                             ),
-#                             id="cag-function-table-div"
-#                         ),
-#                         html.Br(),
-#                         html.Br(),
-#                         html.Div(
-#                             dash_table.DataTable(
-#                                 id='cag-genome-table',
-#                                 columns=[
-#                                     {"name": "Name", "id": "name"},
-#                                     {"name": "Number of genes aligned", "id": "n_genes"},
-#                                     {"name": "Proportion of CAG", "id": "cag_prop"},
-#                                     {"name": "CAG ID", "id": "CAG"},
-#                                 ],
-#                                 data=pd.DataFrame([
-#                                     {
-#                                         "name": "none",
-#                                         "n_genes": "none",
-#                                         "cag_prop": "none",
-#                                         "CAG": "none",
-#                                     }
-#                                 ]).to_dict("records"),
-#                                 style_table={
-#                                     'minWidth': '75%',
-#                                 },
-#                                 style_header={
-#                                     "backgroundColor": "rgb(2,21,70)",
-#                                     "color": "white",
-#                                     "textAlign": "center",
-#                                 },
-#                                 page_action='native',
-#                                 page_size=10,
-#                                 filter_action='native',
-#                                 sort_action='native',
-#                                 hidden_columns=[],
-#                                 css=[{"selector": ".show-hide",
-#                                     "rule": "display: none"}],
-#                             ),
-#                             id="cag-genome-table-div"
-#                         )
-#                     ],
-#                     width=10,
-#                     align="center",
-#                 ),
-#                 dbc.Col(width=1),
-#             ]),
-#         ],
-#         help_text="""
-# Construct a summary of the abundance of a single CAG in relation to the metadata
-# assigned to each specimen. By selecting different types of plots, you may flexibly
-# construct any type of summary display.
-
-# The taxonomic annotation of a given CAG is shown as the proportion of
-# genes which contain a given taxonomic annotation, out of all genes which
-# were given any taxonomic annotation.
-
-# Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
-#         """
-#     )
-# #####################
-# # / PLOT CAG CARD #
-# #####################
-
 
 # ##############################
 # # ANNOTATION ENRICHMENT CARD #

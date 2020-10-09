@@ -33,6 +33,7 @@ class GLAM_PLOTTING:
             "cag-abund-heatmap": self.cag_abundance_heatmap,
             "cag-annot-heatmap": self.cag_annotation_heatmap,
             "volcano-plot": self.volcano_plot,
+            "single-cag-graph": self.single_cag_plot,
         }
 
     ##################################
@@ -1460,6 +1461,49 @@ class GLAM_PLOTTING:
                 max_pvalue,
                 fdr,
             )
+
+    def single_cag_plot(
+        self,
+        glam_io=None,
+        args=None,
+        dataset_uri=None,
+    ):
+        """Plot the abundance of a single CAG."""
+
+        # Format the arguments
+        xaxis = args["xaxis"]
+        plot_type = args["plot_type"]
+        color = args["color_by"]
+        facet = args["facet"]
+        log_scale = args["log10"]
+        cag_id = int(args["cag_id"])
+
+        # Read in the manifest
+        manifest_df = glam_io.get_manifest(dataset_uri)
+
+        # Filter out any masked samples
+        manifest_df = self.filter_manifest(manifest_df, args)
+
+        # Read in the CAG abundances
+        cag_abund_df = glam_io.get_cag_abundances(dataset_uri)
+
+        # Add the abundance of this particular CAG to the manifest
+        plot_df = manifest_df.assign(
+            CAG_ABUND = cag_abund_df.loc[cag_id]
+        )
+
+        # Set up the title of the plot
+        plot_title = "CAG {}".format(cag_id)
+
+        return draw_single_cag_graph(
+            plot_df,
+            plot_title,
+            xaxis,
+            plot_type,
+            color,
+            facet,
+            log_scale
+        )
 
 
 def calc_clr(v):
@@ -3524,7 +3568,6 @@ def draw_taxonomy_sunburst(
 def draw_single_cag_graph(
     plot_df,
     plot_title,
-    axis_label,
     xaxis,
     plot_type,
     color,
@@ -3534,10 +3577,13 @@ def draw_single_cag_graph(
 
     # Make a list of the columns needed for plotting
     columns_for_plotting = [xaxis, "CAG_ABUND"]
-    if color != "none":
+    if color != 'None':
         columns_for_plotting.append(color)
-    if facet != "none":
+    if facet != 'None':
         columns_for_plotting.append(facet)
+
+    # Set up the axis label
+    axis_label = "Relative Abundance"
 
     # Drop any samples which are missing the required data
     plot_df = plot_df.reindex(
@@ -3552,11 +3598,11 @@ def draw_single_cag_graph(
     )
     if plot_df.shape[0] == 0 or (plot_df["CAG_ABUND"] > 0).sum() == 0:
         return empty_fig
-    if xaxis == color and xaxis != "none":
+    if xaxis == color and xaxis != "None":
         return empty_fig
-    if xaxis == facet and xaxis != "none":
+    if xaxis == facet and xaxis != "None":
         return empty_fig
-    if color == facet and color != "none":
+    if color == facet and color != "None":
         return empty_fig
 
     # For plotting on a log scale, replace zero values with the minimum
@@ -3585,8 +3631,8 @@ def draw_single_cag_graph(
         plot_df.sort_values(by=xaxis),
         x = xaxis,
         y = "CAG_ABUND",
-        color = None if color == "none" else color,
-        facet_col = None if facet == "none" else facet
+        color = color if color != "None" else None,
+        facet_col = facet if facet != "None" else None,
     )
 
     # Apply the log transform
