@@ -543,7 +543,13 @@ class GLAM_LAYOUT:
         ]
 
         # Below that is a card with the list of each analysis that is available
-        for analysis in self.analysis_list(dataset_id):
+        for analysis in self.analysis_list(self.glam_db.get_dataset_uri(dataset_id)):
+
+            # Skip cards that are disabled for this dataset
+            if analysis is None:
+                continue
+
+            # Append to the layout
             output_layout.append(
                 dbc.Card(
                     [
@@ -565,6 +571,13 @@ class GLAM_LAYOUT:
                                         encode_search_string({
                                             "n": args["n"],
                                             "mask": args["mask"],
+                                            **{
+                                                k: v(
+                                                    self.glam_io, 
+                                                    self.glam_db.get_dataset_uri(dataset_id)
+                                                )
+                                                for k, v in analysis.dynamic_defaults.items()
+                                            }
                                         })
                                     )
                                 ),
@@ -580,7 +593,7 @@ class GLAM_LAYOUT:
 
     # Return the list of analyses available for a dataset
     # notably, this list is ordered
-    def analysis_list(self, dataset_id):
+    def analysis_list(self, dataset_uri):
         return [
             ExperimentSummaryCard(),
             RichnessCard(),
@@ -589,20 +602,22 @@ class GLAM_LAYOUT:
             CAGSummaryCard(),
             CagAbundanceHeatmap(),
             AnnotationHeatmapCard(),
+            VolcanoCard() if self.glam_io.has_parameters(dataset_uri) else None,
         ]
 
     # Key the analysis by `short_name`
     # notably, dicts are not ordered
-    def analysis_dict(self, dataset_id):
+    def analysis_dict(self, dataset_uri):
         return {
             analysis.short_name: analysis
-            for analysis in self.analysis_list(dataset_id)
+            for analysis in self.analysis_list(dataset_uri)
+            if analysis is not None
         }
 
     # Get the default values for a particular AnalysisCard
     def get_defaults(self, dataset_id, analysis_id):
         return self.analysis_dict(
-            dataset_id
+            self.glam_db.get_dataset_uri(dataset_id)
         )[
             analysis_id
         ].defaults
@@ -619,7 +634,7 @@ class GLAM_LAYOUT:
             return self.page_not_found()
 
         # Make sure we have this analysis
-        if analysis_name not in self.analysis_dict(dataset_id):
+        if analysis_name not in self.analysis_dict(self.glam_db.get_dataset_uri(dataset_id)):
             return self.page_not_found()
 
         # Get the URI for the dataset
@@ -632,7 +647,9 @@ class GLAM_LAYOUT:
                 action="close"
             ),
             # Below that is a card with the analysis itself            
-            self.analysis_dict(dataset_id)[analysis_name].card(
+            self.analysis_dict(
+                self.glam_db.get_dataset_uri(dataset_id)
+            )[analysis_name].card(
                 # ID for this dataset
                 dataset_id, 
                 # Location to read data from
@@ -728,6 +745,10 @@ class AnalysisCard:
 
         # The help_text string will be filled into the help modal
         self.help_text = None
+
+        # This dict provides a way to set defaults dynamically
+        # using a function which takes a GLAM_IO and dataset_uri as inputs
+        self.dynamic_defaults = dict()
 
     def format_href(self, args, dataset_id, **addl_args):
 
@@ -1056,6 +1077,7 @@ class RichnessCard(AnalysisCard):
             metadata="none",
             log_x="on"
         )
+        self.dynamic_defaults = dict()
         self.help_text = """
 In order to perform gene-level metagenomic analysis, the first step is to 
 estimate the abundance of every microbial gene in every sample.
@@ -1150,6 +1172,7 @@ class ExperimentSummaryCard(AnalysisCard):
         self.short_name = "experiment_summary"
         self.plot_list = []
         self.defaults = dict()
+        self.dynamic_defaults = dict()
         self.help_text = """
 ### Experiment Summary
 
@@ -1199,6 +1222,7 @@ class SingleSampleCard(AnalysisCard):
             compare_to="cag_size",
             sample="none",
         )
+        self.dynamic_defaults = dict()
         self.help_text = """
 **Summary of the CAGs detected in a single sample.**
 
@@ -1291,6 +1315,7 @@ class OrdinationCard(AnalysisCard):
             secondary_pc = "2",
             perplexity = 30
         )
+        self.dynamic_defaults = dict()
         self.help_text = """
 **Beta-diversity summary of the similarity of community composition across samples.**
 
@@ -1421,6 +1446,7 @@ class CAGSummaryCard(AnalysisCard):
             histogram_log = "on",
             histogram_nbins = 50,
         )
+        self.dynamic_defaults = dict()
         self.help_text = """
 A key factor in performing efficient gene-level metagenomic analysis is the grouping of genes by co-abundance.
 The term 'co-abundance' is used to describe the degree to which any pair of genes are found at similar relative
@@ -1525,6 +1551,7 @@ class CagAbundanceHeatmap(AnalysisCard):
             metric = "log10",
             annot_tax = "none",
         )
+        self.dynamic_defaults = dict()
         self.help_text="""
 This display lets you compare the relative abundance of a group of CAGs across all samples.
 You may choose to view those CAGs which are most highly abundant, those CAGs containing the
@@ -1688,6 +1715,7 @@ class AnnotationHeatmapCard(AnalysisCard):
             annot_type="taxonomic",
             nannots=40,
         )
+        self.dynamic_defaults = dict()
         self.help_text = """
 This display lets you compare the taxonomic or functional annotations of a group of CAGs.
 
@@ -1820,16 +1848,21 @@ class VolcanoCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Association of CAGs with Experimental Design (volcano plot)"
+        self.long_name = "Association of CAGs with Experiment Parameters (volcano plot)"
         self.short_name = "volcano"
         self.plot_list = []
         self.defaults = dict(
-            parameter=None,
             min_cag_size=5,
             max_cag_size=0,
             max_pvalue=0.95,
-            fdr="true",
+            fdr="on",
             compare_against="coef",
+        )
+
+        # The default parameter name needs to be set using a function
+        # that takes a GLAM_IO and dataset_uri as inputs
+        self.dynamic_defaults = dict(
+            parameter=lambda glam_io, dataset_uri: glam_io.get_parameter_list(dataset_uri)[0]
         )
 
         self.help_text = """
@@ -1842,11 +1875,12 @@ Note: Click on the camera icon at the top of this plot (or any on this page) to 
 
     def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
-        # Read the manifest in order to render the card
-        manifest_df = glam_io.get_manifest(dataset_uri)
-
         # Get the list of parameters available
         parameter_list = glam_io.get_parameter_list(dataset_uri)
+
+        # Set the default parameter to the first one in the list
+        if self.defaults.get("parameter") is None:
+            self.defaults["parameter"] = parameter_list[0]
 
         # Parse the search string, while setting default arguments for this card
         self.args = decode_search_string(
@@ -1858,8 +1892,72 @@ Note: Click on the camera icon at the top of this plot (or any on this page) to 
 
         return self.card_wrapper(
             dataset_id,
-            [],
-            help_text=self.help_text
+            [
+                dbc.Row([
+                    # Left-hand column
+                    dbc.Col(
+                        # Just contains the plot
+                        self.plot_div(
+                            # The plot ID used below corresponds to a plot defined in GLAMPlotting
+                            "volcano-plot"
+                        ),
+                        width = 8,
+                    ),
+                    dbc.Col(
+                        self.dropdown_menu(
+                            label="Select Parameter",
+                            options={
+                                parameter: parameter
+                                for parameter in parameter_list
+                            },
+                            key="parameter"
+                        ) + self.input_field(
+                            label="Minimum CAG size",
+                            description="Only display CAGs which contain at least this number of genes",
+                            key="min_cag_size",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=1,
+                            max_value=100000,
+                        ) + self.input_field(
+                            label="Maximum CAG size",
+                            description="Only display CAGs which contain at most this number of genes (0 for no limit)",
+                            key="max_cag_size",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=0,
+                            max_value=100000,
+                        ) + self.input_field(
+                            label="Maximum p-value",
+                            description="Only display CAGs with p-values below this value",
+                            key="max_pvalue",
+                            input_type="text",
+                            variable_type=float,
+                            min_value=0,
+                            max_value=1,
+                        ) + self.dropdown_menu(
+                            label="FDR-BH Adjustment",
+                            options={
+                                "on": "On",
+                                "off": "Off"
+                            },
+                            key="fdr"
+                        ) + self.dropdown_menu(
+                            label="Compare Against",
+                            options={
+                                "coef": "Estimated Coefficient",
+                                **{
+                                    f"parameter::{parameter}": parameter
+                                    for parameter in parameter_list
+                                    if parameter != self.args["parameter"]
+                                }
+                            },
+                            key="compare_against"
+                        ),
+                        width = 4,
+                    )
+                ])
+            ],
         )
 
 #################
@@ -1875,6 +1973,7 @@ class CardTemplate(AnalysisCard):
         self.defaults = dict(
 
         )
+        self.dynamic_defaults = dict()
 
     def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
@@ -1895,8 +1994,6 @@ class CardTemplate(AnalysisCard):
         return self.card_wrapper(
             dataset_id,
             [],
-            help_text="""
-            """
         )
 
 ################

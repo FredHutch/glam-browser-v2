@@ -31,7 +31,8 @@ class GLAM_PLOTTING:
             "ordination-graph": self.ordination_graph,
             "cag-descriptive-stats-graph": self.cag_summary_plot,
             "cag-abund-heatmap": self.cag_abundance_heatmap,
-            "cag-annot-heatmap": self.cag_annotation_heatmap
+            "cag-annot-heatmap": self.cag_annotation_heatmap,
+            "volcano-plot": self.volcano_plot,
         }
 
     ##################################
@@ -1386,7 +1387,81 @@ class GLAM_PLOTTING:
 
         return fig
 
+    def volcano_plot(
+        self,
+        glam_io=None,
+        args=None,
+        dataset_uri=None,
+    ):
+        """Render a volcano plot."""
         
+        # Parse the arguments needed to render the plot
+        parameter = args["parameter"]
+        min_cag_size = int(args["min_cag_size"])
+        max_cag_size = int(args["max_cag_size"])
+        max_pvalue = float(args["max_pvalue"])
+        fdr = args["fdr"]
+        compare_against = args["compare_against"]
+
+        # Read the corncob results
+        corncob_df = glam_io.get_cag_associations(
+            dataset_uri, parameter
+        )
+        if corncob_df is None:
+            return go.Figure()
+
+        # Get the size of all CAGs
+        cag_sizes = glam_io.get_cag_annotations(dataset_uri)["size"]
+
+        # Filter the corncob_df by CAG size
+        corncob_df = corncob_df.assign(
+            size = cag_sizes
+        )
+
+
+        corncob_df = corncob_df.query(
+            f"size >= {min_cag_size}"
+        )
+        # The maximum size == 0 indicates no filtering
+        if max_cag_size > 0:
+            corncob_df = corncob_df.query(
+                f"size <= {max_cag_size}"
+            )
+
+        # If a comparison parameter was selected, plot the p-values against each other
+        if compare_against != "coef":
+
+            # It must be another parameter
+            m = f"Unexpected {compare_against}"
+            assert compare_against.startswith("parameter::"), m
+
+            # Parse the name of the comparison parameter
+            comparison_parameter = compare_against[len("parameter::"):]
+
+            # Read the corncob results for this parameter
+            comparison_df = glam_io.get_cag_associations(
+                dataset_uri, comparison_parameter
+            )
+            if comparison_df is None:
+                return go.Figure()
+    
+            return draw_double_volcano_graph(
+                corncob_df,
+                parameter,
+                comparison_df,
+                comparison_parameter,
+                max_pvalue,
+                fdr,
+            )
+        else:
+            return draw_volcano_graph(
+                corncob_df,
+                parameter,
+                max_pvalue,
+                fdr,
+            )
+
+
 def calc_clr(v):
     """Calculate the CLR for a vector of abundances."""
     # Index of non-zero values
@@ -3130,38 +3205,14 @@ def draw_cag_annotation_panel(
 #################
 def draw_volcano_graph(
     corncob_df,
-    cag_summary_df,
-    parameter, 
-    comparison_parameter,
-    cag_size_range,
-    neg_log_pvalue_min, 
-    fdr_on_off, 
+    parameter,
+    max_pvalue,
+    fdr_on_off,
 ):
-    if corncob_df is None or neg_log_pvalue_min is None:
-        return go.Figure()
-
-    # Filter the corncob_df by CAG size
-    corncob_df = corncob_df.assign(
-        size = cag_summary_df["size"]
-    ).query(
-        "size >= {}".format(10**cag_size_range[0])
-    ).query(
-        "size <= {}".format(10**cag_size_range[1])
-    )
-    
-    # If a comparison parameter was selected, plot the p-values against each other
-    if comparison_parameter != "coef":
-        return draw_double_volcano_graph(
-            corncob_df,
-            parameter,
-            comparison_parameter,
-            neg_log_pvalue_min,
-            fdr_on_off,
-        )
 
     # Subset to the pvalue threshold
     plot_df = corncob_df.query(
-        "neg_log10_pvalue >= {}".format(neg_log_pvalue_min)
+        f"p_value <= {max_pvalue}"
     )
 
     if fdr_on_off == "off":
@@ -3205,8 +3256,9 @@ def draw_volcano_graph(
 def draw_double_volcano_graph(
     corncob_df,
     parameter, 
+    comparison_df,
     comparison_parameter,
-    neg_log_pvalue_min, 
+    max_pvalue, 
     fdr_on_off, 
 ):
 
@@ -3214,18 +3266,18 @@ def draw_double_volcano_graph(
     plot_y = "wald"
     axis_suffix = "Wald statistic"
 
-    # Subset to these two parameters and pivot to be wide
-    plot_df = pd.concat([
-        corncob_df.query(
-            "parameter == '{}'".format(param_name)
-        ).query(
-            "neg_log10_pvalue >= {}".format(neg_log_pvalue_min)
-        )
-        for param_name in [parameter, comparison_parameter]
-    ]).pivot_table(
-        index="CAG",
-        columns="parameter",
-        values=plot_y
+    # Make a wide DF with the values for both parameters
+    plot_df = pd.DataFrame(
+        {
+            parameter: corncob_df.query(
+                f"p_value <= {max_pvalue}"
+            )[plot_y],
+            comparison_parameter: comparison_df.query(
+                f"p_value <= {max_pvalue}"
+            )[plot_y]
+        }
+    ).dropna(
+        # Remove any CAGs which do not meet all thresholds
     )
 
     # Set the hover text
@@ -3235,19 +3287,23 @@ def draw_double_volcano_graph(
             "CAG {}".format(cag_id),
             "<br>".join([
                 "<br>".join([
-                    "Parameter: {}".format(r["parameter"]),
+                    "Parameter: {}".format(param),
                     "Estimated Coefficient: {} +/- {}".format(
-                        r["estimate"],
-                        r["std_error"]
+                        stats_df.loc[cag_id, "estimate"],
+                        stats_df.loc[cag_id, "std_error"]
                     ),
-                    "p-value: {:.2E}".format(r["p_value"]),
-                    "Wald: {}".format(r["wald"])
+                    "p-value: {:.2E}".format(stats_df.loc[cag_id, "p_value"]),
+                    "Wald: {}".format(stats_df.loc[cag_id, "wald"])
                 ])
-                for _, r in cag_corncob.iterrows()
+                for param, stats_df in [
+                    (parameter, corncob_df),
+                    (comparison_parameter, comparison_df),
+                ]
             ])
         ])
-        for cag_id, cag_corncob in corncob_df.groupby("CAG")
+        for cag_id in plot_df.index.values
     }
+
     text = [
         text_dict.get(cag_id, "")
         for cag_id in plot_df.index.values
