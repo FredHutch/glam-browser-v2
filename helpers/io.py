@@ -293,6 +293,25 @@ class GLAM_IO:
     def has_genomes(self, base_path):
         return "genome_manifest.feather" in self.read_keys(base_path)
 
+    def get_genome_parameters(self, base_path):
+        """Instead of returning all of the parameters, just return those which have genome summaries."""
+        return [
+            fp.replace(".feather", "")
+            for fp in self.read_keys(
+                base_path,
+                prefix="genome_summary/"
+            )
+        ]
+
+    def has_genome_parameters(self, base_path):
+        return len(self.get_genome_parameters(base_path)) > 0
+
+    def get_genome_associations(self, base_path, parameter):
+        return self.read_item(
+            base_path,
+            f"genome_summary/{parameter}.feather"
+        )
+
     def has_functional_annotations(
         self, 
         base_path, 
