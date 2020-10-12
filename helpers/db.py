@@ -96,7 +96,7 @@ class GLAM_DB:
         mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset(id VARCHAR(100) NOT NULL UNIQUE, uri VARCHAR(255) NOT NULL UNIQUE, name VARCHAR(255) NOT NULL);""")
 
         # `dataset_access`: dataset_id, user_name
-        mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset_access(dataset_id VARCHAR(100) NOT NULL UNIQUE, user_name VARCHAR(40) NOT NULL UNIQUE);""")
+        mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset_access(dataset_id VARCHAR(100) NOT NULL, user_name VARCHAR(40) NOT NULL);""")
 
         # `dataset_public`: dataset_id
         mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset_public(dataset_id VARCHAR(100) NOT NULL UNIQUE);""")
