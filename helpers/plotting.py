@@ -1541,13 +1541,87 @@ class GLAM_PLOTTING:
         # Get the parameter name
         parameter = args["parameter"]
 
+        # Get the name of the metric to compare against
+        compare_to = args["compare_to"]
+
         # Get the genome association with this parameter
         plot_df = glam_io.get_genome_associations(dataset_uri, parameter)
 
         # Get the manifest for all genomes
         genome_manifest = glam_io.get_genome_manifest(dataset_uri)
+        genome_names = genome_manifest.set_index("id")["name"]
 
-        print(plot_df.head())
+        # If `compare_to` is not "mean_est_coef", then it must be another parameter
+        if compare_to == "mean_est_coef":
+
+            # Make the plotting table by adding the genome name to the plotting table
+            plot_df = plot_df.assign(
+                genome_name = plot_df["genome_id"].apply(genome_names.get)
+            )
+
+            # Set up the scatterplot
+            fig = go.Figure(
+                data=go.Scattergl(
+                    x = plot_df["mean_est_coef"],
+                    y = plot_df["mean_wald"],
+                    ids = plot_df["genome_id"],
+                    text = plot_df["genome_name"],
+                    hovertemplate = "Genome: %{text}<br>Genome ID: %{id}<br>Mean Estimated Coefficient: %{x}<br>Mean Wald Metric: %{y}<br><extra></extra>",
+                    mode = "markers",
+                    marker_color = "LightSkyBlue",
+                    opacity = 0.5,
+                )
+            )
+            xaxis_title="Mean Estimated Coefficient"
+            yaxis_title="Mean Wald Metric"
+            title_text=f"Summary of per-genome association with {parameter}"
+
+        else:
+
+            # Make the plotting table by combining both parameters
+            plot_df = pd.DataFrame({
+                compare_to: glam_io.get_genome_associations(
+                    dataset_uri, 
+                    compare_to
+                ).set_index("genome_id")["mean_wald"],
+                parameter: plot_df.set_index("genome_id")["mean_wald"]
+            }).assign(
+                genome_name = genome_names
+            )
+
+            # Set up the scatterplot
+            fig = go.Figure(
+                data=go.Scattergl(
+                    x = plot_df[compare_to],
+                    y = plot_df[parameter],
+                    ids = plot_df.index.values,
+                    text = plot_df["genome_name"],
+                    hovertemplate = "Genome: %{text}<br>Genome ID: %{id}<br>Mean Wald (x-axis): %{x}<br>Mean Wald (y-axis): %{y}<br><extra></extra>",
+                    mode = "markers",
+                    marker_color = "LightSkyBlue",
+                    opacity = 0.5,
+                )
+            )
+            xaxis_title=f"Mean Wald Metric ({compare_to})"
+            yaxis_title=f"Mean Wald Metric ({parameter})"
+            title_text=f"Summary of per-genome association with {parameter} and {compare_to}"
+
+        fig.update_layout(
+            xaxis_title=xaxis_title,
+            yaxis_title=yaxis_title,
+            xaxis_zeroline=True,
+            yaxis_zeroline=True,
+            title={
+                'text': title_text,
+                'y': 0.9,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+            },
+            template="simple_white",
+        )
+
+        return fig
 
 def calc_clr(v):
     """Calculate the CLR for a vector of abundances."""

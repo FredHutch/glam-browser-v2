@@ -605,6 +605,7 @@ class GLAM_LAYOUT:
             VolcanoCard() if self.glam_io.has_parameters(dataset_uri) else None,
             PlotCagCard(),
             TaxonomySunburstCard(),
+            GenomeContainmentHeatmap() if self.glam_io.has_genomes(dataset_uri) and self.glam_io.has_genome_parameters(dataset_uri) else None,
             GenomeAssociationCard() if self.glam_io.has_genomes(dataset_uri) and self.glam_io.has_genome_parameters(dataset_uri) else None,
         ]
 
@@ -2081,7 +2082,9 @@ class GenomeAssociationCard(AnalysisCard):
         self.long_name = "Summary of Genome Association with Parameters"
         self.short_name = "genome_association"
         self.plot_list = []
-        self.defaults = dict()
+        self.defaults = dict(
+            compare_to="mean_est_coef"
+        )
         self.dynamic_defaults = dict(
             parameter=lambda glam_io, dataset_uri: glam_io.get_genome_parameters(dataset_uri)[0]
         )
@@ -2136,11 +2139,21 @@ can be inspected in the Genome Alignment Details panel of this browser.
                             label="Experiment Parameter",
                             options={
                                 **{
-                                    f"parameter::{parameter}": parameter
+                                    parameter: parameter
                                     for parameter in parameter_list
                                 }
                             },
                             key="parameter"
+                        ) + self.dropdown_menu(
+                            label="Compare Against",
+                            options={
+                                "mean_est_coef": "Mean Estimated Coefficient",
+                                **{
+                                    parameter: f"Mean Wald: {parameter}"
+                                    for parameter in parameter_list
+                                }
+                            },
+                            key="compare_to"
                         ),
                         width=4
                     )
@@ -2209,6 +2222,88 @@ were given any taxonomic annotation.
             ],
         )
 
+###################################
+# GENOME CONTAINMENT HEATMAP CARD #
+###################################
+class GenomeContainmentHeatmap(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Genomes Similar to Single CAG"
+        self.short_name = "genome_containment_heatmap"
+        self.plot_list = []
+        self.defaults = dict(
+            genome_n = 20,
+            cag_n = 20,
+        )
+        self.dynamic_defaults = dict()
+
+        self.help_text = """
+Every CAG was aligned against a collection of reference microbial
+genomes. To summarize the similarity of each CAG to a given genome,
+we can calculate the proportion of genes from that CAG which align
+to a given genome (given the stringency of alignment parameters
+required by the user).
+
+In order to show those genomes which most closely resemble a selected
+CAG, we will display the genomes with the largest number of aligning
+genes. For context, we will also display those CAGs which have similarity
+to that set of selected genomes.
+        """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    dbc.Col(
+                        self.plot_div(
+                            "genome-containment-heatmap"
+                        ),
+                        width=8
+                    ),
+                    dbc.Col(
+                        self.input_field(
+                            label="CAG ID",
+                            description="Select a CAG to display",
+                            key="cag_id",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=0,
+                            max_value=250000,
+                        ) + self.input_field(
+                            label="Number of Genomes",
+                            description="Number of genomes to display",
+                            key="genome_n",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=1,
+                            max_value=150,
+                        ) + self.input_field(
+                            label="Number of CAGs",
+                            description="Number of CAGs to display",
+                            key="cag_n",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=1,
+                            max_value=150,
+                        ),
+                        width=4
+                    )
+                ])
+            ],
+        )
+
+
 #################
 # CARD TEMPLATE #
 #################
@@ -2223,6 +2318,9 @@ class CardTemplate(AnalysisCard):
 
         )
         self.dynamic_defaults = dict()
+
+        self.help_text = """
+        """
 
     def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
@@ -2241,55 +2339,6 @@ class CardTemplate(AnalysisCard):
             dataset_id,
             [],
         )
-
-
-# ###########################
-# # GENOME ASSOCIATION CARD #
-# ###########################
-# def genome_association_card():
-#     return card_wrapper(
-#         "Genome Association Summary",
-#         [
-#             dbc.Row([
-#                 dbc.Col(
-#                     dbc.Spinner(
-#                         dcc.Graph(
-#                             id="genome-association-scatterplot"
-#                         )
-#                     ),
-#                     width=8,
-#                     align="center"
-#                 ),
-#                 dbc.Col(
-#                     [
-#                         html.Label("Parameter"),
-#                         dcc.Dropdown(
-#                             id="genome-association-parameter",
-#                             options=[],
-#                             value=None,
-#                         ),
-#                         html.Br(),
-#                         dcc.Dropdown(
-#                             id='genome-association-prop-abs',
-#                             options=[
-#                                 {'label': 'Proportion of genes   ', 'value': 'prop'},
-#                                 {'label': 'Number of genes', 'value': 'num'},
-#                             ],
-#                             value="prop",
-#                         )
-#                     ],
-#                     width=4,
-#                     align="center"
-#                 )
-#             ])
-#         ],
-#         custom_id="genome-association-card",
-#         help_text="""
-#         """
-#     )
-# #############################
-# # \ GENOME ASSOCIATION CARD #
-# #############################
 
 
 # ###########################
@@ -2434,156 +2483,4 @@ class CardTemplate(AnalysisCard):
 
 
 
-
-
-# def plot_type_dropdown(
-#     dropdown_id,
-#     label_text='Plot Type',
-#     options=[
-#         {'label': 'Points', 'value': 'scatter'},
-#         {'label': 'Histogram', 'value': 'hist'},
-#     ],
-#     default_value="scatter"
-# ):
-#     return [
-#         html.Label(label_text),
-#         dcc.Dropdown(
-#             id=dropdown_id,
-#             options=options,
-#             value=default_value
-#         ),
-#         html.Br(),
-#     ]
-
-
-# def ordination_pc_slider(
-#     slider_id,
-#     label_text,
-#     default_value
-# ):
-#     return basic_slider(
-#         slider_id,
-#         label_text,
-#         min_value=1,
-#         max_value=10,
-#         default_value=default_value,
-#         marks=[1, 5, 10],
-#         included=False
-#     )
-
-
-# def basic_slider(
-#     slider_id,
-#     label_text,
-#     min_value=1,
-#     max_value=10,
-#     step_value=1,
-#     default_value=1,
-#     marks=[],
-#     included=True
-# ):
-#     return [
-#         html.Div([
-#             html.Label(label_text),
-#             dcc.Slider(
-#                 id=slider_id,
-#                 min=min_value,
-#                 max=max_value,
-#                 step=step_value,
-#                 marks={
-#                     str(n): str(n)
-#                     for n in marks
-#                 },
-#                 value=default_value,
-#                 included=included
-#             ),
-#             html.Br()
-#         ], id="%s-div" % slider_id)
-#     ]
-
-
-# def corncob_parameter_dropdown(
-#     label_text='Parameter',
-#     group="none"
-# ):
-#     return [
-#         html.Label(label_text),
-#         dcc.Dropdown(
-#             id={
-#                 "type": "corncob-parameter-dropdown",
-#                 "group": group,
-#             },
-#             options=[
-#                 {'label': 'None', 'value': 'none'},
-#             ],
-#             value="none"
-#         ),
-#         html.Br(),
-#     ]
-
-
-# def volcano_pvalue_slider(label_text='P-Value Filter (-log10)', group="none"):
-#     """This slider is missing the max and marks, which will be updated by a callback."""
-#     return [
-#         html.Label(label_text),
-#         dcc.Slider(
-#             id={
-#                 "type": "corncob-pvalue-slider",
-#                 "group": group,
-#             },
-#             min=0,
-#             step=0.1,
-#             value=1,
-#             included=False,
-#         ),
-#         html.Br()
-#     ]
-
-
-# def cag_size_slider(slider_id, label_text='CAG Size Filter'):
-#     return [
-#         html.Label(label_text),
-#         dcc.RangeSlider(
-#             id={
-#                 "type": "cag-size-slider",
-#                 "name": slider_id
-#             },
-#             min=0,
-#             max=3,
-#             step=0.1,
-#             marks={
-#                 str(n): str(10**n)
-#                 for n in range(3)
-#             },
-#             value=[
-#                 0,
-#                 3
-#             ]
-#         ),
-#         html.Br()
-#     ]
-
-
-# def cag_metric_slider(slider_id, metric, label_text):
-#     return [
-#         html.Label(label_text),
-#         dcc.RangeSlider(
-#             id={
-#                 "type": "cag-metric-slider",
-#                 "metric": metric,
-#                 "name": slider_id
-#             },
-#             min=0,
-#             max=1,
-#             step=0.1,
-#             marks={
-#                 str(n): str(round(n, 2))
-#                 for n in np.arange(
-#                     0, 1, 0.2
-#                 )
-#             },
-#             value=[0, 1]
-#         ),
-#         html.Br()
-#     ]
 
