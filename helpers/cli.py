@@ -128,6 +128,14 @@ def main():
         func=lambda args: open_glam_db(args).grant_access(user=args.user_name, dataset=args.dataset_name)
     )
 
+    # REVOKE ACCESS TO A DATASET
+    parser_grant_access = subparsers.add_parser("revoke-access", help="Revoke permission for a user to access a dataset")
+    parser_grant_access.add_argument("--user-name", type=str, help="Name of user")
+    parser_grant_access.add_argument("--dataset-name", type=str, help="Name of dataset")
+    parser_grant_access.set_defaults(
+        func=lambda args: open_glam_db(args).revoke_access(user=args.user_name, dataset=args.dataset_name)
+    )
+
     # DUMP TABLE CONTENTS
     parser_grant_access = subparsers.add_parser("dump-table", help="Print the contents of any table")
     parser_grant_access.add_argument("--table", type=str, help="Name of the table to read")

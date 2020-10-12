@@ -342,6 +342,44 @@ class GLAM_DB:
             user, dataset
         ))
 
+    # REVOKE ACCESS FOR A USER TO ACCESS A DATASET
+    def revoke_access(self, user=None, dataset=None):
+        assert user is not None
+        assert dataset is not None
+
+        # Read the whole table of dataset access
+        access_table = self.read_table("dataset_access")
+
+        if not any((access_table["dataset_id"] == dataset) & (access_table["user_name"] == user)):
+
+            # This user cannot access this dataset
+            logging.info(f"User {user} does not have access to {dataset}")
+
+            # Check to see if the username or password might not exist
+            msg = "User does not exist: {}".format(user)
+            if user not in self.read_table("user")["name"].values:
+                print(msg)
+
+            msg = "Dataset does not exist: {}".format(dataset)
+            if dataset not in self.read_table("dataset")["id"].values:
+                print(msg)
+
+            return
+
+        # Remove the line from the table
+        access_table = access_table.loc[
+            (
+                (access_table["dataset_id"] != dataset) | (access_table["user_name"] != user)
+            )
+        ]
+
+        # Write the table
+        self.write_table("dataset_access", access_table, if_exists="replace")
+
+        logging.info("User {} has had access to {} revoked".format(
+            user, dataset
+        ))
+
     def random_string(self, length):
         return ''.join(random.choice(string.ascii_letters) for i in range(length))
 
