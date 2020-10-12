@@ -36,6 +36,9 @@ class GLAM_IO:
         # and for keys
         self.key_cache = ExpiringDict(max_len=100, max_age_seconds=3600)
 
+        # Set the index of genome IDs, keyed by dataset
+        self.genome_ix = dict()
+
     def read_item(self, base_path, suffix):
 
         # Check the cache
@@ -262,7 +265,7 @@ class GLAM_IO:
     def get_cag_genome_containment(self, base_path, cag_id):
         # Genome containment is sharded by CAG_ID % 1000
         df = self.read_item(
-            os.path.join(base_path, f"genome_containment/"),
+            os.path.join(base_path, "genome_containment/CAG/"),
             f"{cag_id % 1000}.feather"
         )
 
@@ -273,6 +276,36 @@ class GLAM_IO:
         return df.query(
             f"CAG == {cag_id}"
         ).drop(columns="CAG")
+
+    def get_genome_cag_containment(self, base_path, genome_id):
+        # Genome containment is sharded by GENOME_ID % 1000
+
+        # Check to see if we have the genome index for this dataset
+        if self.genome_ix.get(base_path) is None:
+            logging.info(f"Fetching genome index for {base_path}")
+            self.genome_ix[base_path] = pd.Series(
+                self.get_genome_manifest(base_path)["id"].values,
+                index=range(self.get_genome_manifest(base_path).shape[0])
+            ).apply(
+                lambda ix: ix % 1000
+            )
+
+        # Get the index for this particular genome
+        genome_ix = self.genome_ix[base_path].loc[genome_id]
+
+        # Read the containment for this genome
+        df = self.read_item(
+            os.path.join(base_path, "genome_containment/CAG/"),
+            f"{genome_ix}.feather"
+        )
+
+        # Not all CAGs have genome containment
+        if df is None:
+            return None
+
+        return df.query(
+            f"genome == {genome_id}"
+        ).drop(columns="genome")
 
     def get_top_genome_containment(self, base_path):
         # The top genome containment for all CAGs is stored in a single table
@@ -301,6 +334,7 @@ class GLAM_IO:
                 base_path,
                 prefix="genome_summary/"
             )
+            if fp != "Intercept.feather"
         ]
 
     def has_genome_parameters(self, base_path):
