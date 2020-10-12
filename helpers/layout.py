@@ -604,6 +604,8 @@ class GLAM_LAYOUT:
             AnnotationHeatmapCard(),
             VolcanoCard() if self.glam_io.has_parameters(dataset_uri) else None,
             PlotCagCard(),
+            TaxonomySunburstCard(),
+            GenomeAssociationCard() if self.glam_io.has_genomes(dataset_uri) and self.glam_io.has_genome_parameters(dataset_uri) else None,
         ]
 
     # Key the analysis by `short_name`
@@ -1169,7 +1171,7 @@ class ExperimentSummaryCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Experiment Summary"
+        self.long_name = "Overall Summary of Gene-Level Analysis"
         self.short_name = "experiment_summary"
         self.plot_list = []
         self.defaults = dict()
@@ -1215,7 +1217,7 @@ class SingleSampleCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Single Sample Display"
+        self.long_name = "CAGs Detected in a Single Sample"
         self.short_name = "single_sample"
         self.plot_list = []
         self.defaults = dict(
@@ -1306,7 +1308,7 @@ class OrdinationCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Ordination Analysis (e.g. PCA)"
+        self.long_name = "Comparison of Specimens by Overall Composition (e.g. PCA)"
         self.short_name = "ordination"
         self.plot_list = []
         self.defaults = dict(
@@ -1994,12 +1996,6 @@ class PlotCagCard(AnalysisCard):
 Construct a summary of the abundance of a single CAG in relation to the metadata
 assigned to each specimen. By selecting different types of plots, you may flexibly
 construct any type of summary display.
-
-The taxonomic annotation of a given CAG is shown as the proportion of
-genes which contain a given taxonomic annotation, out of all genes which
-were given any taxonomic annotation.
-
-Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
         """
 
     def card(self, dataset_id, dataset_uri, search_string, glam_io):
@@ -2075,6 +2071,144 @@ Note: Click on the camera icon at the top of this plot (or any on this page) to 
         )
 
 
+# ###########################
+# # GENOME ASSOCIATION CARD #
+# ###########################
+class GenomeAssociationCard(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Summary of Genome Association with Parameters"
+        self.short_name = "genome_association"
+        self.plot_list = []
+        self.defaults = dict()
+        self.dynamic_defaults = dict(
+            parameter=lambda glam_io, dataset_uri: glam_io.get_genome_parameters(dataset_uri)[0]
+        )
+
+        self.help_text = """
+After aligning genes against a set of genomes, we are able to
+annotate genomes on the basis of how many genes align which
+belong to CAGs which are associated with any of the parameters
+in the associated experiment. 
+
+Operationally, the user sets a cuttoff _alpha_ value when they
+execute the genome alignment module which generated this dataset.
+That _alpha_ value is used as a cutoff for this genome summary display
+in which any CAG with an FDR-BH adjusted p-value below that threshold
+are annotated as "highly associated" with that parameter. In order
+to summarize the genomes, we can then display the number (or proportion)
+of genes in the genome which are "highly associated."
+
+While this approach is somewhat arbitrary, it can be used to quickly
+identify those genomes which may contain the genetic elements that
+are most strongly associated with a phenotype of interest.
+
+Having identified a genome of interest, the individual gene alignments
+can be inspected in the Genome Alignment Details panel of this browser.
+        """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Get the list of parameters available
+        parameter_list = glam_io.get_parameter_list(dataset_uri)
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    dbc.Col(
+                        self.plot_div(
+                            "genome-association-scatterplot"
+                        ),
+                        width=8
+                    ),
+                    dbc.Col(
+                        self.dropdown_menu(
+                            label="Experiment Parameter",
+                            options={
+                                **{
+                                    f"parameter::{parameter}": parameter
+                                    for parameter in parameter_list
+                                }
+                            },
+                            key="parameter"
+                        ),
+                        width=4
+                    )
+                ])
+            ],
+        )
+
+##########################
+# TAXONOMY SUNBURST CARD #
+##########################
+class TaxonomySunburstCard(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Taxonomic Assignment of Genes in a Single CAG"
+        self.short_name = "taxonomy_sunburst"
+        self.plot_list = []
+        self.defaults = dict()
+        self.dynamic_defaults = dict(
+            cag_id = lambda glam_io, dataset_uri: glam_io.get_cag_annotations(
+                dataset_uri
+            ).sort_values(
+                by="mean_abundance"
+            ).index.values[-1]
+        )
+
+        self.help_text = """
+The taxonomic annotation of a given CAG is shown as the proportion of
+genes which contain a given taxonomic annotation, out of all genes which
+were given any taxonomic annotation.
+        """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    dbc.Col(
+                        self.plot_div(
+                            "tax-sunburst"
+                        ),
+                        width=8
+                    ),
+                    dbc.Col(
+                        self.input_field(
+                            label="CAG ID",
+                            description="Select a CAG to display",
+                            key="cag_id",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=0,
+                            max_value=250000,
+                        ),
+                        width=4
+                    )
+                ])
+            ],
+        )
+
 #################
 # CARD TEMPLATE #
 #################
@@ -2107,108 +2241,6 @@ class CardTemplate(AnalysisCard):
             dataset_id,
             [],
         )
-
-# ##############################
-# # ANNOTATION ENRICHMENT CARD #
-# ##############################
-# def annotation_enrichment_card():
-#     return card_wrapper(
-#         "Estimated Coefficients by Annotation",
-#         [
-#             dbc.Row([
-#                 dbc.Col(
-#                     dbc.Spinner(
-#                         dcc.Graph(id="annotation-enrichment-graph")
-#                     ),
-#                     width=8,
-#                     align="center",
-#                 ),
-#                 dbc.Col(
-#                     [
-#                         html.Label("Annotation Group"),
-#                         dcc.Dropdown(
-#                             id="annotation-enrichment-type",
-#                             options=[
-#                                 {'label': 'Functional', 'value': 'eggNOG_desc'},
-#                                 {'label': 'Taxonomic Species', 'value': 'species'},
-#                                 {'label': 'Taxonomic Genus', 'value': 'genus'},
-#                                 {'label': 'Taxonomic Family', 'value': 'family'},
-#                             ],
-#                             value='eggNOG_desc',
-#                         ),
-#                         html.Br(),
-#                     ] + corncob_parameter_dropdown(
-#                         group="annotation-enrichment"
-#                     ) + basic_slider(
-#                         "annotation-enrichment-plotn",
-#                         "Number of Annotations per Plot",
-#                         min_value=10,
-#                         max_value=50,
-#                         default_value=20,
-#                         marks=[10, 30, 50]
-#                     ) + [
-#                         html.Label("Show Positive / Negative"),
-#                         dcc.Dropdown(
-#                             id="annotation-enrichment-show-pos-neg",
-#                             options=[
-#                                 {'label': 'Both', 'value': 'both'},
-#                                 {'label': 'Positive', 'value': 'positive'},
-#                                 {'label': 'Negative', 'value': 'negative'},
-#                             ],
-#                             value="both",
-#                         ),
-#                         html.Br(),
-#                         dbc.Button(
-#                             "Next", 
-#                             id='annotation-enrichment-button-next', 
-#                             n_clicks=0,
-#                             color="light",
-#                         ),
-#                         dbc.Button(
-#                             "Previous", 
-#                             id='annotation-enrichment-button-previous', 
-#                             n_clicks=0,
-#                             color="light",
-#                         ),
-#                         dbc.Button(
-#                             "First", 
-#                             id='annotation-enrichment-button-first', 
-#                             n_clicks=0,
-#                             color="light",
-#                         ),
-#                         html.Div(
-#                             children=[1],
-#                             id='annotation-enrichment-page-num',
-#                             style={"display": "none"},
-#                         ),
-#                     ],
-#                     width=4,
-#                     align="center",
-#                 )
-#             ])
-#         ],
-#         help_text="""
-# After estimating the coefficient of association for every individual CAG, we are able to
-# aggregate those estimated coefficients on the basis of the annotations assigned to the genes
-# found within those CAGs.
-
-# The reasoning for this analysis is that a single CAG may be strongly associated with
-# parameter X, and that CAG may contain a gene which has been taxonomically assigned to
-# species Y. In that case, we are interested in testing whether _all_ CAGs which contain
-# any gene which has been taxonomically assigned to the same species Y are estimated to
-# have an association with parameter X _in aggregate_.
-
-# In this analysis we show the estimated coefficient of association for the groups of CAGs
-# constructed for every unique annotation in the analysis. This may include functional
-# annotations generated with eggNOG-mapper, as well as taxonomic assignments generated
-# by alignment against RefSeq.
-
-# Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
-#         """
-#     )
-# ################################
-# # / ANNOTATION ENRICHMENT CARD #
-# ################################
 
 
 # ###########################
@@ -2253,25 +2285,6 @@ class CardTemplate(AnalysisCard):
 #         ],
 #         custom_id="genome-association-card",
 #         help_text="""
-# After aligning genes against a set of genomes, we are able to
-# annotate genomes on the basis of how many genes align which
-# belong to CAGs which are associated with any of the parameters
-# in the associated experiment. 
-
-# Operationally, the user sets a cuttoff _alpha_ value when they
-# execute the genome alignment module which generated this dataset.
-# That _alpha_ value is used as a cutoff for this genome summary display
-# in which any CAG with an FDR-BH adjusted p-value below that threshold
-# are annotated as "highly associated" with that parameter. In order
-# to summarize the genomes, we can then display the number (or proportion)
-# of genes in the genome which are "highly associated."
-
-# While this approach is somewhat arbitrary, it can be used to quickly
-# identify those genomes which may contain the genetic elements that
-# are most strongly associated with a phenotype of interest.
-
-# Having identified a genome of interest, the individual gene alignments
-# can be inspected in the Genome Alignment Details panel of this browser.
 #         """
 #     )
 # #############################

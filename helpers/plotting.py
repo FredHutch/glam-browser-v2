@@ -34,6 +34,8 @@ class GLAM_PLOTTING:
             "cag-annot-heatmap": self.cag_annotation_heatmap,
             "volcano-plot": self.volcano_plot,
             "single-cag-graph": self.single_cag_plot,
+            "genome-association-scatterplot": self.genome_association_plot,
+            "tax-sunburst": self.taxononmy_sunburst,
         }
 
     ##################################
@@ -1505,6 +1507,47 @@ class GLAM_PLOTTING:
             log_scale
         )
 
+    def taxononmy_sunburst(
+        self,
+        glam_io=None,
+        args=None,
+        dataset_uri=None,
+    ):
+
+        # Get the CAG ID
+        cag_id = int(args["cag_id"])
+
+        # Get the taxonomic assignment of genes in this CAG
+        cag_tax_df = glam_io.get_cag_taxa(
+            dataset_uri, 
+            cag_id, 
+            "all"
+        )
+
+        # Render the plot
+        return draw_taxonomy_sunburst(
+            cag_tax_df,
+            f"CAG {cag_id}"
+        )
+        
+
+    def genome_association_plot(
+        self,
+        glam_io=None,
+        args=None,
+        dataset_uri=None,
+    ):
+
+        # Get the parameter name
+        parameter = args["parameter"]
+
+        # Get the genome association with this parameter
+        plot_df = glam_io.get_genome_associations(dataset_uri, parameter)
+
+        # Get the manifest for all genomes
+        genome_manifest = glam_io.get_genome_manifest(dataset_uri)
+
+        print(plot_df.head())
 
 def calc_clr(v):
     """Calculate the CLR for a vector of abundances."""
@@ -3577,9 +3620,9 @@ def draw_single_cag_graph(
 
     # Make a list of the columns needed for plotting
     columns_for_plotting = [xaxis, "CAG_ABUND"]
-    if color != 'None':
+    if color != 'None' and color is not None:
         columns_for_plotting.append(color)
-    if facet != 'None':
+    if facet != 'None' and facet is not None:
         columns_for_plotting.append(facet)
 
     # Set up the axis label
@@ -3602,7 +3645,7 @@ def draw_single_cag_graph(
         return empty_fig
     if xaxis == facet and xaxis != "None":
         return empty_fig
-    if color == facet and color != "None":
+    if color == facet and color != "None" and color is not None:
         return empty_fig
 
     # For plotting on a log scale, replace zero values with the minimum
