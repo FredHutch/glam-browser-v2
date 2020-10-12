@@ -261,6 +261,27 @@ class GLAM_DB:
         logging.info("Name: {}".format(name))
         logging.info("URI: {}".format(uri))
 
+    # REMOVE A DATASET
+    def remove_dataset(self, dataset_id=None):
+        assert dataset_id is not None
+
+        # Read the whole list of datasets
+        dataset_table = self.read_table("dataset")
+
+        if dataset_id not in dataset_table["id"].values:
+            logging.info(f"Dataset ({dataset_id}) does not exist")
+            return
+
+        # Remove the dataset from the table
+        dataset_table = dataset_table.loc[
+            dataset_table["id"] != dataset_id
+        ]
+
+        # Write the table
+        self.write_table("dataset", dataset_table, if_exists="replace")
+
+        logging.info(f"Removed dataset: {dataset_id}")
+
     # Get the name of a dataset
     def get_dataset_name(self, dataset_id=None):
         assert dataset_id is not None, "Please specify a dataset ID"

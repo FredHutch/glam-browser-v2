@@ -113,6 +113,13 @@ def main():
         func=lambda args: open_glam_db(args).add_dataset(dataset_id=args.dataset_id, name=args.name, uri=args.uri)
     )
 
+    # REMOVE A DATASET
+    parser_add_dataset = subparsers.add_parser("remove-dataset", help="Remove a dataset")
+    parser_add_dataset.add_argument("--dataset-id", type=str, help="Unique ID for dataset")
+    parser_add_dataset.set_defaults(
+        func=lambda args: open_glam_db(args).remove_dataset(dataset_id=args.dataset_id)
+    )
+
     # GRANT ACCESS TO A DATASET
     parser_grant_access = subparsers.add_parser("grant-access", help="Allow a user to access a dataset")
     parser_grant_access.add_argument("--user-name", type=str, help="Name of user")
