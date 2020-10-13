@@ -96,7 +96,7 @@ class GLAM_DB:
         mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset(id VARCHAR(100) NOT NULL UNIQUE, uri VARCHAR(255) NOT NULL UNIQUE, name VARCHAR(255) NOT NULL);""")
 
         # `dataset_access`: dataset_id, user_name
-        mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset_access(dataset_id VARCHAR(100) NOT NULL UNIQUE, user_name VARCHAR(40) NOT NULL UNIQUE);""")
+        mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset_access(dataset_id VARCHAR(100) NOT NULL, user_name VARCHAR(40) NOT NULL);""")
 
         # `dataset_public`: dataset_id
         mycursor.execute("""CREATE TABLE IF NOT EXISTS dataset_public(dataset_id VARCHAR(100) NOT NULL UNIQUE);""")
@@ -261,6 +261,27 @@ class GLAM_DB:
         logging.info("Name: {}".format(name))
         logging.info("URI: {}".format(uri))
 
+    # REMOVE A DATASET
+    def remove_dataset(self, dataset_id=None):
+        assert dataset_id is not None
+
+        # Read the whole list of datasets
+        dataset_table = self.read_table("dataset")
+
+        if dataset_id not in dataset_table["id"].values:
+            logging.info(f"Dataset ({dataset_id}) does not exist")
+            return
+
+        # Remove the dataset from the table
+        dataset_table = dataset_table.loc[
+            dataset_table["id"] != dataset_id
+        ]
+
+        # Write the table
+        self.write_table("dataset", dataset_table, if_exists="replace")
+
+        logging.info(f"Removed dataset: {dataset_id}")
+
     # Get the name of a dataset
     def get_dataset_name(self, dataset_id=None):
         assert dataset_id is not None, "Please specify a dataset ID"
@@ -318,6 +339,44 @@ class GLAM_DB:
         self.write_table("dataset_access", access_table, if_exists="append")
 
         logging.info("User {} has been granted access to {}".format(
+            user, dataset
+        ))
+
+    # REVOKE ACCESS FOR A USER TO ACCESS A DATASET
+    def revoke_access(self, user=None, dataset=None):
+        assert user is not None
+        assert dataset is not None
+
+        # Read the whole table of dataset access
+        access_table = self.read_table("dataset_access")
+
+        if not any((access_table["dataset_id"] == dataset) & (access_table["user_name"] == user)):
+
+            # This user cannot access this dataset
+            logging.info(f"User {user} does not have access to {dataset}")
+
+            # Check to see if the username or password might not exist
+            msg = "User does not exist: {}".format(user)
+            if user not in self.read_table("user")["name"].values:
+                print(msg)
+
+            msg = "Dataset does not exist: {}".format(dataset)
+            if dataset not in self.read_table("dataset")["id"].values:
+                print(msg)
+
+            return
+
+        # Remove the line from the table
+        access_table = access_table.loc[
+            (
+                (access_table["dataset_id"] != dataset) | (access_table["user_name"] != user)
+            )
+        ]
+
+        # Write the table
+        self.write_table("dataset_access", access_table, if_exists="replace")
+
+        logging.info("User {} has had access to {} revoked".format(
             user, dataset
         ))
 

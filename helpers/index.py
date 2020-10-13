@@ -100,6 +100,10 @@ class GLAM_INDEX:
                 logging.info("Exists: {}".format(upload_prefix))
                 return
 
+        # If the df is callable, call it
+        if callable(df):
+            df = df()
+
         # implicit else
         logging.info("Uploading to {}".format(upload_prefix))
 
@@ -200,7 +204,19 @@ class GLAM_INDEX:
 
         logging.info("Reading in {}".format(key_name))
 
+        # Read the table
         df = pd.read_hdf(self.store, key_name)
+
+        # Remove unneeded columns
+        df = df.drop(
+            columns=["reasonable", "estimand"]
+        )
+        
+        # Set the type of the values
+        df = df.astype({
+            col_name: str if col_name == "specimen" else float
+            for col_name in df.columns.values
+        })
 
         # Compute `prop_reads`
         return df.assign(
@@ -221,6 +237,12 @@ class GLAM_INDEX:
             df = df.head(
                 max_n_cags
             )
+
+        # Set the type of the columns
+        df = df.astype({
+            col_name: int if col_name in ["CAG", "size"] else float
+            for col_name in df.columns.values
+        })
 
         # Compute `prop_reads`
         return df.assign(
@@ -337,6 +359,12 @@ class GLAM_INDEX:
             df = df.head(
                 max_n_cags
             )
+
+        # Set the type of the columns
+        df = df.astype({
+            col_name: int if col_name == "CAG" else float
+            for col_name in df.columns.values
+        })
 
         return df
 
@@ -480,6 +508,17 @@ class GLAM_INDEX:
                 df.shape[0],
                 df["CAG"].unique().shape[0]
             ))
+
+        # Set the type of the columns
+        df = df.astype({
+            "genome": str,
+            "CAG": int,
+            "n_genes": int,
+            "containment": float,
+            "genome_prop": float,
+            "genome_bases": int,
+            "cag_prop": float,
+        })
 
         # Cache the result in memory
         self.cache[cache_key] = df
@@ -644,31 +683,31 @@ class GLAM_INDEX:
                 dest_key = "{}/{}".format(dest_prefix, genome_id)
 
                 self.write(
-                    pd.read_hdf(self.store, source_key), 
+                    lambda: pd.read_hdf(self.store, source_key), 
                     dest_key
                 )
 
         # Experiment manifest
         self.write(
-            self.parse_manifest(),
+            self.parse_manifest,
             "manifest",
             filetype="csv.gz"
         )
         # Specimen metrics
         self.write(
-            self.parse_specimen_metrics(),
+            self.parse_specimen_metrics,
             "specimen_metrics"
         )
 
         # CAG annotations
         self.write(
-            self.parse_cag_annotations(),
+            self.parse_cag_annotations,
             "cag_annotations"
         )
 
         # Read in the CAG abundances
         self.write(
-            self.parse_cag_abundances(),
+            self.parse_cag_abundances,
             "cag_abundances"
         )
 
@@ -688,7 +727,7 @@ class GLAM_INDEX:
         # Write out the table of the top genome hits for each CAG
         if "containment" in self.leaves("/genomes/cags"):
             self.write(
-                self.parse_top_genome_containment(),
+                self.parse_top_genome_containment,
                 "genome_top_hit"
             )
 

@@ -543,7 +543,13 @@ class GLAM_LAYOUT:
         ]
 
         # Below that is a card with the list of each analysis that is available
-        for analysis in self.analysis_list(dataset_id):
+        for analysis in self.analysis_list(self.glam_db.get_dataset_uri(dataset_id)):
+
+            # Skip cards that are disabled for this dataset
+            if analysis is None:
+                continue
+
+            # Append to the layout
             output_layout.append(
                 dbc.Card(
                     [
@@ -565,6 +571,13 @@ class GLAM_LAYOUT:
                                         encode_search_string({
                                             "n": args["n"],
                                             "mask": args["mask"],
+                                            **{
+                                                k: v(
+                                                    self.glam_io, 
+                                                    self.glam_db.get_dataset_uri(dataset_id)
+                                                )
+                                                for k, v in analysis.dynamic_defaults.items()
+                                            }
                                         })
                                     )
                                 ),
@@ -580,7 +593,7 @@ class GLAM_LAYOUT:
 
     # Return the list of analyses available for a dataset
     # notably, this list is ordered
-    def analysis_list(self, dataset_id):
+    def analysis_list(self, dataset_uri):
         return [
             ExperimentSummaryCard(),
             RichnessCard(),
@@ -589,20 +602,26 @@ class GLAM_LAYOUT:
             CAGSummaryCard(),
             CagAbundanceHeatmap(),
             AnnotationHeatmapCard(),
+            VolcanoCard() if self.glam_io.has_parameters(dataset_uri) else None,
+            PlotCagCard(),
+            TaxonomySunburstCard(),
+            GenomeContainmentHeatmap() if self.glam_io.has_genomes(dataset_uri) and self.glam_io.has_genome_parameters(dataset_uri) else None,
+            GenomeAssociationCard() if self.glam_io.has_genomes(dataset_uri) and self.glam_io.has_genome_parameters(dataset_uri) else None,
         ]
 
     # Key the analysis by `short_name`
     # notably, dicts are not ordered
-    def analysis_dict(self, dataset_id):
+    def analysis_dict(self, dataset_uri):
         return {
             analysis.short_name: analysis
-            for analysis in self.analysis_list(dataset_id)
+            for analysis in self.analysis_list(dataset_uri)
+            if analysis is not None
         }
 
     # Get the default values for a particular AnalysisCard
     def get_defaults(self, dataset_id, analysis_id):
         return self.analysis_dict(
-            dataset_id
+            self.glam_db.get_dataset_uri(dataset_id)
         )[
             analysis_id
         ].defaults
@@ -619,7 +638,7 @@ class GLAM_LAYOUT:
             return self.page_not_found()
 
         # Make sure we have this analysis
-        if analysis_name not in self.analysis_dict(dataset_id):
+        if analysis_name not in self.analysis_dict(self.glam_db.get_dataset_uri(dataset_id)):
             return self.page_not_found()
 
         # Get the URI for the dataset
@@ -632,7 +651,9 @@ class GLAM_LAYOUT:
                 action="close"
             ),
             # Below that is a card with the analysis itself            
-            self.analysis_dict(dataset_id)[analysis_name].card(
+            self.analysis_dict(
+                self.glam_db.get_dataset_uri(dataset_id)
+            )[analysis_name].card(
                 # ID for this dataset
                 dataset_id, 
                 # Location to read data from
@@ -726,6 +747,13 @@ class AnalysisCard:
         # on each page to the list of plot elements displayed
         self.plot_list = []
 
+        # The help_text string will be filled into the help modal
+        self.help_text = None
+
+        # This dict provides a way to set defaults dynamically
+        # using a function which takes a GLAM_IO and dataset_uri as inputs
+        self.dynamic_defaults = dict()
+
     def format_href(self, args, dataset_id, **addl_args):
 
         # Update the arguments
@@ -743,12 +771,11 @@ class AnalysisCard:
         self,
         dataset_id,
         card_body,
-        help_text="Missing",
         custom_id=None,
         custom_style=None,
     ):
         # Must provide help text
-        assert help_text is not None, "Must provide help text for every card"
+        assert self.help_text is not None, "Must provide help text for every card"
 
         # Make a link (href) which will be applied to the pencil icon
         # The functionality will be to add or subtract the 'editable' function from self.plot_div()
@@ -804,7 +831,7 @@ class AnalysisCard:
                                             self.long_name
                                         ),
                                         dbc.ModalBody(
-                                            dcc.Markdown(help_text)
+                                            dcc.Markdown(self.help_text)
                                         ),
                                         dbc.ModalFooter(
                                             dbc.Button(
@@ -1054,6 +1081,31 @@ class RichnessCard(AnalysisCard):
             metadata="none",
             log_x="on"
         )
+        self.dynamic_defaults = dict()
+        self.help_text = """
+In order to perform gene-level metagenomic analysis, the first step is to 
+estimate the abundance of every microbial gene in every sample.
+
+The analytical steps needed to perform this analysis include:
+
+- Removal of host sequences by subtractive alignment
+- _De novo_ assembly of every individual sample
+- Deduplication of protein coding sequences across all samples to form a _de novo_ gene catalog
+- Alignment of WGS reads from every sample against that gene catalog
+- Estimation of the relative abundance of every gene as the proportion of reads which align uniquely (normalized by gene length)
+
+To visualize how genes were quantified in each sample, you may select:
+
+- The proportion of reads from each sample which align uniquely to a single protein-coding gene from the catalog
+- The number of genes which were identified by _de novo_ assembly in each sample
+- The number of genes which were identified by alignment against the non-redundant gene catalog generated by _de novo_ assembly
+
+Data may be summarized either by a single point per sample or with a frequency histogram.
+
+To mask any sample from this plot, deselect it in the manifest at the bottom of the page.
+
+Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
+        """
 
     def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
@@ -1110,30 +1162,6 @@ class RichnessCard(AnalysisCard):
                     )
                 )
             ]),
-            help_text="""
-In order to perform gene-level metagenomic analysis, the first step is to 
-estimate the abundance of every microbial gene in every sample.
-
-The analytical steps needed to perform this analysis include:
-
-- Removal of host sequences by subtractive alignment
-- _De novo_ assembly of every individual sample
-- Deduplication of protein coding sequences across all samples to form a _de novo_ gene catalog
-- Alignment of WGS reads from every sample against that gene catalog
-- Estimation of the relative abundance of every gene as the proportion of reads which align uniquely (normalized by gene length)
-
-To visualize how genes were quantified in each sample, you may select:
-
-- The proportion of reads from each sample which align uniquely to a single protein-coding gene from the catalog
-- The number of genes which were identified by _de novo_ assembly in each sample
-- The number of genes which were identified by alignment against the non-redundant gene catalog generated by _de novo_ assembly
-
-Data may be summarized either by a single point per sample or with a frequency histogram.
-
-To mask any sample from this plot, deselect it in the manifest at the bottom of the page.
-
-Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
-            """
         )
 
 
@@ -1144,26 +1172,12 @@ class ExperimentSummaryCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Experiment Summary"
+        self.long_name = "Overall Summary of Gene-Level Analysis"
         self.short_name = "experiment_summary"
         self.plot_list = []
         self.defaults = dict()
-
-    def card(self, dataset_id, dataset_uri, search_string, glam_io):
-
-        # Parse the search string, while setting default arguments for this card
-        # (while there are no arguments here, we need this to keep n={})
-        self.args = decode_search_string(
-            search_string, **self.defaults
-        )
-
-        # Set the dataset ID (used to render card components)
-        self.dataset_id = dataset_id
-
-        return self.card_wrapper(
-            dataset_id,
-            html.Div(id={"name": "experiment-summary", "index": 0}),
-            help_text="""
+        self.dynamic_defaults = dict()
+        self.help_text = """
 ### Experiment Summary
 
 An experiment consists of a collection of metagenomic WGS files which
@@ -1180,6 +1194,21 @@ The metrics displayed in this panel are as follows:
 * CAGs: The number of gene groups identified by clustering the gene catalog by co-abundance across this collection of specimens
 * Formula: If specified, a formula capturing the comparison of specimens intended with this experimental design
 """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Parse the search string, while setting default arguments for this card
+        # (while there are no arguments here, we need this to keep n={})
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            html.Div(id={"name": "experiment-summary", "index": 0}),
         )
 
 ######################
@@ -1189,7 +1218,7 @@ class SingleSampleCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Single Sample Display"
+        self.long_name = "CAGs Detected in a Single Sample"
         self.short_name = "single_sample"
         self.plot_list = []
         self.defaults = dict(
@@ -1197,6 +1226,22 @@ class SingleSampleCard(AnalysisCard):
             compare_to="cag_size",
             sample="none",
         )
+        self.dynamic_defaults = dict()
+        self.help_text = """
+**Summary of the CAGs detected in a single sample.**
+
+You may select any sample to display the relative abundance of every CAG which
+was detected, comparing by default against the size (number of genes) in each CAG. 
+
+Optionally, you may choose to compare the abundance of CAGs in a pair of samples.
+
+Abundance metrics:
+
+- Relative Abundance (default): The proportion of gene copies detected in a sample which are assigned to each CAG
+- Centered Log-Ratio: The log10 transformed relative abundance of each CAG divided by the geometric mean of relative abundance of all CAGs detected in that sample
+
+Note: Click on the camera icon at the top of this plot to save an image to your computer.
+            """
 
     def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
@@ -1254,21 +1299,6 @@ class SingleSampleCard(AnalysisCard):
                     )
                 )
             ]),
-            help_text="""
-**Summary of the CAGs detected in a single sample.**
-
-You may select any sample to display the relative abundance of every CAG which
-was detected, comparing by default against the size (number of genes) in each CAG. 
-
-Optionally, you may choose to compare the abundance of CAGs in a pair of samples.
-
-Abundance metrics:
-
-- Relative Abundance (default): The proportion of gene copies detected in a sample which are assigned to each CAG
-- Centered Log-Ratio: The log10 transformed relative abundance of each CAG divided by the geometric mean of relative abundance of all CAGs detected in that sample
-
-Note: Click on the camera icon at the top of this plot to save an image to your computer.
-            """
         )
 
 
@@ -1279,7 +1309,7 @@ class OrdinationCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Ordination Analysis (e.g. PCA)"
+        self.long_name = "Comparison of Specimens by Overall Composition (e.g. PCA)"
         self.short_name = "ordination"
         self.plot_list = []
         self.defaults = dict(
@@ -1289,6 +1319,26 @@ class OrdinationCard(AnalysisCard):
             secondary_pc = "2",
             perplexity = 30
         )
+        self.dynamic_defaults = dict()
+        self.help_text = """
+**Beta-diversity summary of the similarity of community composition across samples.**
+
+One way to understand the composition of a microbial community is to compare every pair of samples
+on the basis of what microbes were detected. This approach is referred to as 'beta-diversity' analysis.
+
+You may select a distance metric which is used to calculate the similarity of every pair of samples.
+Based on that distance matrix, PCA or t-SNE may be used to summarize the groups of samples which
+are most similar to each other.
+
+By moving the sliders, you may select different composite indices to display on the plot.
+
+The upper plot shows the frequency histogram of samples across the first composite axis.
+The lower scatter plot shows two axes, and metadata from the manifest can be overlaid as a color on each point.
+
+To mask any sample from this plot, deselect it in the manifest at the bottom of the page.
+
+Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
+    """
 
     def ordination_settings(self):
         """Depending on whether PCA or t-SNE is selected, provide the appropriate controls."""
@@ -1380,25 +1430,6 @@ class OrdinationCard(AnalysisCard):
                     align="center"
                 )
             ]),
-            help_text="""
-**Beta-diversity summary of the similarity of community composition across samples.**
-
-One way to understand the composition of a microbial community is to compare every pair of samples
-on the basis of what microbes were detected. This approach is referred to as 'beta-diversity' analysis.
-
-You may select a distance metric which is used to calculate the similarity of every pair of samples.
-Based on that distance matrix, PCA or t-SNE may be used to summarize the groups of samples which
-are most similar to each other.
-
-By moving the sliders, you may select different composite indices to display on the plot.
-
-The upper plot shows the frequency histogram of samples across the first composite axis.
-The lower scatter plot shows two axes, and metadata from the manifest can be overlaid as a color on each point.
-
-To mask any sample from this plot, deselect it in the manifest at the bottom of the page.
-
-Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
-        """
 )
 
 ####################
@@ -1419,6 +1450,37 @@ class CAGSummaryCard(AnalysisCard):
             histogram_log = "on",
             histogram_nbins = 50,
         )
+        self.dynamic_defaults = dict()
+        self.help_text = """
+A key factor in performing efficient gene-level metagenomic analysis is the grouping of genes by co-abundance.
+The term 'co-abundance' is used to describe the degree to which any pair of genes are found at similar relative
+abundances in similar samples. The core concept is that any pair of genes which are always found on the same
+molecule of DNA are expected to have similar relative abundances as measured by WGS metagenomic sequencing.
+
+In this analysis, genes were grouped into Co-Abundant Groups (CAGs) by average linkage clustering using the
+cosine measure of co-abundance across every pair of samples. After constructing CAGs for this dataset, each
+of those CAGs can be summarized on the basis of the aggregate abundance of all genes contained in that CAG.
+(note: every gene can only belong to a single CAG in this approach).
+
+The biological interpretation of CAGs is that they are expected to correspond to groups of genes which are
+consistently found on the same piece of genetic material (chromosome, plasmid, etc.), or that they are found
+in organismsm which are highly co-abundant in this dataset.
+
+This panel summarizes that set of CAGs on the basis of:
+
+- Size: Number of genes contained in each CAG
+- Mean Abundance across all samples (as the sum of the relative abundance of every gene in that CAG)
+- Entropy: The evenness of abundance for a given CAG across all samples
+- Prevalence: The proportion of samples in which a CAG was detected at all
+- Standard Deviation of relative abundance values across all samples
+
+Note: Masking a sample from the manifest at the bottom of the page does _not_ update the summary CAG metrics displayed here.
+
+By default, this frequency histogram displays the number of _genes_ found in the group of CAGs that fall
+within a given range. You may instead choose to display the number of CAGs which fall into each bin.
+
+Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
+    """
 
     def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
@@ -1467,36 +1529,7 @@ class CAGSummaryCard(AnalysisCard):
                     )
                 ])
             ],
-            help_text="""
-A key factor in performing efficient gene-level metagenomic analysis is the grouping of genes by co-abundance.
-The term 'co-abundance' is used to describe the degree to which any pair of genes are found at similar relative
-abundances in similar samples. The core concept is that any pair of genes which are always found on the same
-molecule of DNA are expected to have similar relative abundances as measured by WGS metagenomic sequencing.
 
-In this analysis, genes were grouped into Co-Abundant Groups (CAGs) by average linkage clustering using the
-cosine measure of co-abundance across every pair of samples. After constructing CAGs for this dataset, each
-of those CAGs can be summarized on the basis of the aggregate abundance of all genes contained in that CAG.
-(note: every gene can only belong to a single CAG in this approach).
-
-The biological interpretation of CAGs is that they are expected to correspond to groups of genes which are
-consistently found on the same piece of genetic material (chromosome, plasmid, etc.), or that they are found
-in organismsm which are highly co-abundant in this dataset.
-
-This panel summarizes that set of CAGs on the basis of:
-
-- Size: Number of genes contained in each CAG
-- Mean Abundance across all samples (as the sum of the relative abundance of every gene in that CAG)
-- Entropy: The evenness of abundance for a given CAG across all samples
-- Prevalence: The proportion of samples in which a CAG was detected at all
-- Standard Deviation of relative abundance values across all samples
-
-Note: Masking a sample from the manifest at the bottom of the page does _not_ update the summary CAG metrics displayed here.
-
-By default, this frequency histogram displays the number of _genes_ found in the group of CAGs that fall
-within a given range. You may instead choose to display the number of CAGs which fall into each bin.
-
-Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
-        """
         )
 ######################
 # / CAG SUMMARY CARD #
@@ -1522,6 +1555,32 @@ class CagAbundanceHeatmap(AnalysisCard):
             metric = "log10",
             annot_tax = "none",
         )
+        self.dynamic_defaults = dict()
+        self.help_text="""
+This display lets you compare the relative abundance of a group of CAGs across all samples.
+You may choose to view those CAGs which are most highly abundant, those CAGs containing the
+largest number of genes, or those CAGs which are most consistently associated with a parameter
+in your formula (if provided).
+
+If you decide to display those CAGs which are most associated with a parameter in the formula,
+then you will see the estimated coefficient of association for each CAG against that parameter
+displayed to the right of the heatmap.
+
+You may also choose to display the taxonomic annotation of each CAG at a particular taxonomic
+level (e.g. species). That will add a color label to each row in the heatmap, and you can see
+the name of the organism that represents by moving your mouse over that part of the plot.
+
+The controls at the top of the display help you customize this heatmap. You may choose to include
+a greater or smaller number of CAGs; you may choose to filter CAGs based on their size (the
+number of genes in each CAG); and you may choose to annotate the samples based on user-defined
+metadata from the manifest.
+
+By default, the columns in the heatmap are ordered based on the similarity of CAG abundances
+(average linkage clustering), but you may also choose to set the order according to the sorted
+metadata for each sample.
+
+Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
+    """
 
     def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
@@ -1637,39 +1696,14 @@ class CagAbundanceHeatmap(AnalysisCard):
                     )
                 ])
             ],
-            help_text="""
-This display lets you compare the relative abundance of a group of CAGs across all samples.
-You may choose to view those CAGs which are most highly abundant, those CAGs containing the
-largest number of genes, or those CAGs which are most consistently associated with a parameter
-in your formula (if provided).
-
-If you decide to display those CAGs which are most associated with a parameter in the formula,
-then you will see the estimated coefficient of association for each CAG against that parameter
-displayed to the right of the heatmap.
-
-You may also choose to display the taxonomic annotation of each CAG at a particular taxonomic
-level (e.g. species). That will add a color label to each row in the heatmap, and you can see
-the name of the organism that represents by moving your mouse over that part of the plot.
-
-The controls at the top of the display help you customize this heatmap. You may choose to include
-a greater or smaller number of CAGs; you may choose to filter CAGs based on their size (the
-number of genes in each CAG); and you may choose to annotate the samples based on user-defined
-metadata from the manifest.
-
-By default, the columns in the heatmap are ordered based on the similarity of CAG abundances
-(average linkage clustering), but you may also choose to set the order according to the sorted
-metadata for each sample.
-
-Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
-        """
 )
 ################################
 # / CAG ABUNDANCE HEATMAP CARD #
 ################################
 
-################################
-# CARD ANNOTATION HEATMAP CARD #
-################################
+###############################
+# CAG ANNOTATION HEATMAP CARD #
+###############################
 class AnnotationHeatmapCard(AnalysisCard):
 
     def __init__(self):
@@ -1685,6 +1719,25 @@ class AnnotationHeatmapCard(AnalysisCard):
             annot_type="taxonomic",
             nannots=40,
         )
+        self.dynamic_defaults = dict()
+        self.help_text = """
+This display lets you compare the taxonomic or functional annotations of a group of CAGs.
+
+You may choose to view those CAGs which are most highly abundant, those CAGs containing the
+largest number of genes, or those CAGs which are most consistently associated with a parameter
+in your formula (if provided).
+
+If you decide to display those CAGs which are most associated with a parameter in the formula,
+then you will see the estimated coefficient of association for each CAG against that parameter
+displayed to the right of the heatmap. In addition, you will see the aggregate association of
+each selected annotation against that same parameter from the formula.
+
+The controls at the top of the display help you customize this heatmap. You may choose to include
+a greater or smaller number of CAGs; you may choose to filter CAGs based on their size (the
+number of genes in each CAG); and you may choose to display either taxonomic or functional annotations.
+
+Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
+        """
 
     def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
@@ -1790,44 +1843,275 @@ class AnnotationHeatmapCard(AnalysisCard):
                     )
                 ])
             ],
-            help_text="""
-This display lets you compare the taxonomic or functional annotations of a group of CAGs.
-
-You may choose to view those CAGs which are most highly abundant, those CAGs containing the
-largest number of genes, or those CAGs which are most consistently associated with a parameter
-in your formula (if provided).
-
-If you decide to display those CAGs which are most associated with a parameter in the formula,
-then you will see the estimated coefficient of association for each CAG against that parameter
-displayed to the right of the heatmap. In addition, you will see the aggregate association of
-each selected annotation against that same parameter from the formula.
-
-The controls at the top of the display help you customize this heatmap. You may choose to include
-a greater or smaller number of CAGs; you may choose to filter CAGs based on their size (the
-number of genes in each CAG); and you may choose to display either taxonomic or functional annotations.
-
-Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
-            """
         )
 
-#################
-# CARD TEMPLATE #
-#################
-class CardTemplate(AnalysisCard):
+################
+# VOLCANO PLOT #
+################
+class VolcanoCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = ""
-        self.short_name = ""
+        self.long_name = "Association of CAGs with Experiment Parameters (volcano plot)"
+        self.short_name = "volcano"
         self.plot_list = []
         self.defaults = dict(
-
+            min_cag_size=5,
+            max_cag_size=0,
+            max_pvalue=0.95,
+            fdr="on",
+            compare_against="coef",
         )
+
+        # The default parameter name needs to be set using a function
+        # that takes a GLAM_IO and dataset_uri as inputs
+        self.dynamic_defaults = dict(
+            parameter=lambda glam_io, dataset_uri: glam_io.get_parameter_list(dataset_uri)[0]
+        )
+
+        self.help_text = """
+The estimated association of each CAG with a specified metadata feature is displayed
+as a volcano plot. The values shown in this display must be pre-computed by selecting
+the `--formula` flag when running _geneshot_.
+
+Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
+        """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Get the list of parameters available
+        parameter_list = glam_io.get_parameter_list(dataset_uri)
+
+        # Set the default parameter to the first one in the list
+        if self.defaults.get("parameter") is None:
+            self.defaults["parameter"] = parameter_list[0]
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    # Left-hand column
+                    dbc.Col(
+                        # Just contains the plot
+                        self.plot_div(
+                            # The plot ID used below corresponds to a plot defined in GLAMPlotting
+                            "volcano-plot"
+                        ),
+                        width = 8,
+                    ),
+                    dbc.Col(
+                        self.dropdown_menu(
+                            label="Select Parameter",
+                            options={
+                                parameter: parameter
+                                for parameter in parameter_list
+                            },
+                            key="parameter"
+                        ) + self.input_field(
+                            label="Minimum CAG size",
+                            description="Only display CAGs which contain at least this number of genes",
+                            key="min_cag_size",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=1,
+                            max_value=100000,
+                        ) + self.input_field(
+                            label="Maximum CAG size",
+                            description="Only display CAGs which contain at most this number of genes (0 for no limit)",
+                            key="max_cag_size",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=0,
+                            max_value=100000,
+                        ) + self.input_field(
+                            label="Maximum p-value",
+                            description="Only display CAGs with p-values below this value",
+                            key="max_pvalue",
+                            input_type="text",
+                            variable_type=float,
+                            min_value=0,
+                            max_value=1,
+                        ) + self.dropdown_menu(
+                            label="FDR-BH Adjustment",
+                            options={
+                                "on": "On",
+                                "off": "Off"
+                            },
+                            key="fdr"
+                        ) + self.dropdown_menu(
+                            label="Compare Against",
+                            options={
+                                "coef": "Estimated Coefficient",
+                                **{
+                                    f"parameter::{parameter}": parameter
+                                    for parameter in parameter_list
+                                    if parameter != self.args["parameter"]
+                                }
+                            },
+                            key="compare_against"
+                        ),
+                        width = 4,
+                    )
+                ])
+            ],
+        )
+
+#################
+# PLOT CAG CARD #
+#################
+class PlotCagCard(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Plot Individual CAG Abundance"
+        self.short_name = "plot_cag"
+        self.plot_list = []
+        self.defaults = dict(
+            plot_type = "scatter",
+            log10 = "on",
+            color_by = None,
+            facet = None,
+        )
+        self.dynamic_defaults = dict(
+            cag_id = lambda glam_io, dataset_uri: glam_io.get_cag_annotations(
+                dataset_uri
+            ).sort_values(
+                by="mean_abundance"
+            ).index.values[-1],
+            xaxis = lambda glam_io, dataset_uri: [
+                col_name
+                for col_name in glam_io.get_manifest(dataset_uri).columns.values
+                if col_name not in ["R1", "R2"]
+            ][0]
+        )
+
+        self.help_text = """
+Construct a summary of the abundance of a single CAG in relation to the metadata
+assigned to each specimen. By selecting different types of plots, you may flexibly
+construct any type of summary display.
+        """
 
     def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
         # Read the manifest in order to render the card
         manifest_df = glam_io.get_manifest(dataset_uri)
+        manifest_options = {
+            col_name: col_name
+            for col_name in manifest_df.columns.values
+            if col_name not in ["R1", "R2"]
+        }
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    dbc.Col(
+                        self.plot_div(
+                            "single-cag-graph"
+                        ),
+                        width=8
+                    ),
+                    dbc.Col(
+                        self.input_field(
+                            label="CAG ID",
+                            description="Select a CAG to display",
+                            key="cag_id",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=0,
+                            max_value=250000,
+                        ) + self.dropdown_menu(
+                            label="X-axis",
+                            key="xaxis",
+                            options=manifest_options
+                        ) + self.dropdown_menu(
+                            label="Plot Type",
+                            key="plot_type",
+                            options={
+                                "scatter": "Points",
+                                "line": "Line",
+                                "boxplot": "Boxplot",
+                                "strip": "Stripplot",
+                            }
+                        ) + self.dropdown_menu(
+                            label="Color",
+                            key="color_by",
+                            options=manifest_options
+                        ) + self.dropdown_menu(
+                            label="Facet",
+                            key="facet",
+                            options=manifest_options
+                        ) + self.dropdown_menu(
+                            label="Log Scale",
+                            key="log10",
+                            options={
+                                "on": "On",
+                                "off": "Off"
+                            }
+                        ),
+                        width=4
+                    )
+                ])
+            ],
+        )
+
+
+# ###########################
+# # GENOME ASSOCIATION CARD #
+# ###########################
+class GenomeAssociationCard(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Summary of Genome Association with Parameters"
+        self.short_name = "genome_association"
+        self.plot_list = []
+        self.defaults = dict(
+            compare_to="mean_est_coef"
+        )
+        self.dynamic_defaults = dict(
+            parameter=lambda glam_io, dataset_uri: glam_io.get_genome_parameters(dataset_uri)[0]
+        )
+
+        self.help_text = """
+After aligning genes against a set of genomes, we are able to
+annotate genomes on the basis of how many genes align which
+belong to CAGs which are associated with any of the parameters
+in the associated experiment. 
+
+Operationally, the user sets a cuttoff _alpha_ value when they
+execute the genome alignment module which generated this dataset.
+That _alpha_ value is used as a cutoff for this genome summary display
+in which any CAG with an FDR-BH adjusted p-value below that threshold
+are annotated as "highly associated" with that parameter. In order
+to summarize the genomes, we can then display the number (or proportion)
+of genes in the genome which are "highly associated."
+
+While this approach is somewhat arbitrary, it can be used to quickly
+identify those genomes which may contain the genetic elements that
+are most strongly associated with a phenotype of interest.
+
+Having identified a genome of interest, the individual gene alignments
+can be inspected in the Genome Alignment Details panel of this browser.
+        """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
         # Get the list of parameters available
         parameter_list = glam_io.get_parameter_list(dataset_uri)
@@ -1842,521 +2126,219 @@ class CardTemplate(AnalysisCard):
 
         return self.card_wrapper(
             dataset_id,
-            [],
-            help_text="""
-            """
+            [
+                dbc.Row([
+                    dbc.Col(
+                        self.plot_div(
+                            "genome-association-scatterplot"
+                        ),
+                        width=8
+                    ),
+                    dbc.Col(
+                        self.dropdown_menu(
+                            label="Experiment Parameter",
+                            options={
+                                **{
+                                    parameter: parameter
+                                    for parameter in parameter_list
+                                }
+                            },
+                            key="parameter"
+                        ) + self.dropdown_menu(
+                            label="Compare Against",
+                            options={
+                                "mean_est_coef": "Mean Estimated Coefficient",
+                                **{
+                                    parameter: f"Mean Wald: {parameter}"
+                                    for parameter in parameter_list
+                                }
+                            },
+                            key="compare_to"
+                        ),
+                        width=4
+                    )
+                ])
+            ],
         )
 
-# ###############################
-# # CAG ANNOTATION HEATMAP CARD #
-# ###############################
-# def cag_annotation_heatmap_card():
-#     return card_wrapper(
-#         "CAG Annotation Heatmap",
-#         [
-#             dbc.Row([
-#                 dbc.Col(
-#                     [
-#                         html.Label("Select CAGs By"),
-#                         dcc.Dropdown(
-#                             id={"type": "heatmap-select-cags-by", "parent": "annotation-heatmap"},
-#                             options=[
-#                                 {"label": "Average Relative Abundance", "value": "abundance"},
-#                                 {"label": "Size (Number of Genes)", "value": "size"},
-#                             ],
-#                             value="abundance"
-#                         ),
-#                         html.Br()
-#                     ] + basic_slider(
-#                         "cag-annotation-heatmap-ncags",
-#                         "Number of CAGs to Display",
-#                         min_value=5,
-#                         max_value=100,
-#                         default_value=20,
-#                         marks=[5, 25, 50, 75, 100]
-#                     ) + cag_size_slider(
-#                         "cag-annotation-heatmap-size-range"
-#                     ),
-#                     width=4,
-#                     align="center",
-#                 ),
-#                 dbc.Col([
-#                         html.Label("CAGs Displayed (comma-delimited)"),
-#                         dcc.Input(
-#                             id="annotation-heatmap-selected-cags",
-#                             type="text",
-#                             placeholder="Comma-separated list of CAG IDs",
-#                             debounce=True,
-#                             pattern="[0-9, ]*",
-#                         )
-#                     ],
-#                     width=4,
-#                     align="center",
-#                 ),
-#                 dbc.Col(
-#                     [
-#                         html.Label("Annotation Type"),
-#                         dcc.Dropdown(
-#                             id="cag-annotation-heatmap-annotation-type",
-#                             options=[
-#                                 {'label': 'Functional', 'value': 'eggNOG_desc'},
-#                                 {'label': 'Taxonomic', 'value': 'taxonomic'},
-#                                 {'label': 'Species', 'value': 'species'},
-#                                 {'label': 'Genus', 'value': 'genus'},
-#                                 {'label': 'Family', 'value': 'family'},
-#                             ],
-#                             value='taxonomic',
-#                         ),
-#                         html.Br(),
-#                     ] + basic_slider(
-#                         "cag-annotation-heatmap-nannots",
-#                         "Max Number of Annotations to Display",
-#                         min_value=5,
-#                         max_value=100,
-#                         default_value=20,
-#                         marks=[5, 25, 50, 75, 100]
-#                     ),
-#                     width=4,
-#                     align="center",
-#                 ),
-#             ]),
-#             dbc.Row([
-#                 dbc.Col(
-#                     dbc.Spinner(dcc.Graph(
-#                         id='cag-annotation-heatmap-graph'
-#                     )),
-#                     width=12,
-#                     align="center"
-#                 )
-#             ]),
-#         ],
-#         help_text="""
-#         """
-# )
-# #################################
-# # / CAG ANNOTATION HEATMAP CARD #
-# #################################
+##########################
+# TAXONOMY SUNBURST CARD #
+##########################
+class TaxonomySunburstCard(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Taxonomic Assignment of Genes in a Single CAG"
+        self.short_name = "taxonomy_sunburst"
+        self.plot_list = []
+        self.defaults = dict()
+        self.dynamic_defaults = dict(
+            cag_id = lambda glam_io, dataset_uri: glam_io.get_cag_annotations(
+                dataset_uri
+            ).sort_values(
+                by="mean_abundance"
+            ).index.values[-1]
+        )
+
+        self.help_text = """
+The taxonomic annotation of a given CAG is shown as the proportion of
+genes which contain a given taxonomic annotation, out of all genes which
+were given any taxonomic annotation.
+        """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    dbc.Col(
+                        self.plot_div(
+                            "tax-sunburst"
+                        ),
+                        width=8
+                    ),
+                    dbc.Col(
+                        self.input_field(
+                            label="CAG ID",
+                            description="Select a CAG to display",
+                            key="cag_id",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=0,
+                            max_value=250000,
+                        ),
+                        width=4
+                    )
+                ])
+            ],
+        )
+
+###################################
+# GENOME CONTAINMENT HEATMAP CARD #
+###################################
+class GenomeContainmentHeatmap(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Genomes Similar to Single CAG"
+        self.short_name = "genome_containment_heatmap"
+        self.plot_list = []
+        self.defaults = dict(
+            genome_n = 20,
+            cag_n = 20,
+        )
+        self.dynamic_defaults = dict()
+
+        self.help_text = """
+Every CAG was aligned against a collection of reference microbial
+genomes. To summarize the similarity of each CAG to a given genome,
+we can calculate the proportion of genes from that CAG which align
+to a given genome (given the stringency of alignment parameters
+required by the user).
+
+In order to show those genomes which most closely resemble a selected
+CAG, we will display the genomes with the largest number of aligning
+genes. For context, we will also display those CAGs which have similarity
+to that set of selected genomes.
+        """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    dbc.Col(
+                        self.plot_div(
+                            "genome-containment-heatmap"
+                        ),
+                        width=8
+                    ),
+                    dbc.Col(
+                        self.input_field(
+                            label="CAG ID",
+                            description="Select a CAG to display",
+                            key="cag_id",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=0,
+                            max_value=250000,
+                        ) + self.input_field(
+                            label="Number of Genomes",
+                            description="Number of genomes to display",
+                            key="genome_n",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=1,
+                            max_value=150,
+                        ) + self.input_field(
+                            label="Number of CAGs",
+                            description="Number of CAGs to display",
+                            key="cag_n",
+                            input_type="number",
+                            variable_type=int,
+                            min_value=1,
+                            max_value=150,
+                        ),
+                        width=4
+                    )
+                ])
+            ],
+        )
 
 
-# ################
-# # VOLCANO PLOT #
-# ################
-# def volcano_card():
-#     return card_wrapper(
-#         "Association Screening",
-#         dbc.Row([
-#             dbc.Col(
-#                 dbc.Spinner(dcc.Graph(
-#                             id='volcano-graph'
-#                             )),
-#                 width=8,
-#                 align="center"
-#             ),
-#             dbc.Col(
-#                 corncob_parameter_dropdown(
-#                     group="volcano-parameter",
-#                 ) + cag_size_slider(
-#                     "volcano-cag-size-slider"
-#                 ) + volcano_pvalue_slider(
-#                     group="volcano-parameter",
-#                 ) + log_scale_radio_button(
-#                     "volcano-fdr-radio",
-#                     label_text="FDR-BH adjustment"
-#                 ) + [
-#                     html.Br(),
-#                     html.Label("Compare Against"),
-#                     dcc.Dropdown(
-#                         id="corncob-comparison-parameter-dropdown",
-#                         options=[
-#                             {'label': 'Estimated Coefficient', 'value': 'coef'},
-#                         ],
-#                         value="coef"
-#                     ),
-#                     html.Div(id='volcano-selected-cag',
-#                              style={"display": "none"}),
-#                 ],
-#                 width=4,
-#                 align="center"
-#             )
-#         ]),
-#         help_text="""
-# The estimated association of each CAG with a specified metadata feature is displayed
-# as a volcano plot. The values shown in this display must be pre-computed by selecting
-# the `--formula` flag when running _geneshot_.
+#################
+# CARD TEMPLATE #
+#################
+class CardTemplate(AnalysisCard):
 
-# Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
-#         """
-#     )
-# ##################
-# # / VOLCANO PLOT #
-# ##################
+    def __init__(self):
 
-# ###################
-# # PLOT CAG CARD #
-# ###################
-# def plot_cag_card():
-#     return card_wrapper(
-#         "Plot CAG Abundance",
-#         [
-#             dbc.Row([
-#                 dbc.Col(
-#                     dbc.Spinner(
-#                         dcc.Graph(id="plot-cag-graph")
-#                     ),
-#                     width=8,
-#                     align="center",
-#                 ),
-#                 dbc.Col(
-#                     [
-#                         html.Label("Display CAG(s) By"),
-#                         dcc.Dropdown(
-#                             id="plot-cag-selection-type",
-#                             options=[
-#                                 {"label": "CAG ID", "value": "cag_id"},
-#                                 {"label": "Association & Annotation", "value": "association"},
-#                             ],
-#                             value="cag_id",
-#                         ),
-#                         html.Br(),
-#                         html.Div(
-#                             [
-#                                 html.Label("CAG ID", style={"margin-right": "15px"}),
-#                                 dcc.Input(
-#                                     id="plot-cag-multiselector",
-#                                     type="number",
-#                                     placeholder="<CAG ID>",
-#                                     debounce=True,
-#                                     min=0,
-#                                     max=1, # Will be updated by callbacks
-#                                     step=1
-#                                 ),
-#                                 html.Br(),
-#                             ], 
-#                             id="plot-cag-by-id-div"
-#                         ),
-#                         html.Div(
-#                             corncob_parameter_dropdown(
-#                                 group="plot-cag",
-#                             ) + [
-#                                 html.Label("Filter by Annotation"),
-#                                 dcc.Dropdown(
-#                                     id="plot-cag-annotation-multiselector",
-#                                     options=[],
-#                                     value=[],
-#                                     multi=True,
-#                                     placeholder="None"
-#                                 ),
-#                                 html.Br(),
-#                                 html.Label(
-#                                     "Number of CAGs", 
-#                                     style={"margin-right": "15px"}
-#                                 ),
-#                                 dcc.Input(
-#                                     id="plot-cag-annotation-ncags",
-#                                     type="number",
-#                                     placeholder="<NUM CAGs>",
-#                                     debounce=True,
-#                                     min=1,
-#                                     max=1000,
-#                                     step=1,
-#                                     value=5,
-#                                 ),
-#                                 html.Br(),
-#                             ],
-#                             id="plot-cag-by-association-div"
-#                         ),
-#                     ] + metadata_field_dropdown(
-#                         "plot-cag-xaxis",
-#                         label_text="X-axis",
-#                     ) + plot_type_dropdown(
-#                         "plot-cag-plot-type",
-#                         options=[
-#                             {'label': 'Points', 'value': 'scatter'},
-#                             {'label': 'Line', 'value': 'line'},
-#                             {'label': 'Boxplot', 'value': 'boxplot'},
-#                             {'label': 'Stripplot', 'value': 'strip'},
-#                         ]
-#                     ) + metadata_field_dropdown(
-#                         "plot-cag-color",
-#                         label_text="Color",
-#                     ) + metadata_field_dropdown(
-#                         "plot-cag-facet",
-#                         label_text="Facet",
-#                     ) + log_scale_radio_button(
-#                         "plot-cag-log"
-#                     ),
-#                     width=4,
-#                     align="center",
-#                 )
-#             ]),
-#             dbc.Row([
-#                 dbc.Col(width=1),
-#                 dbc.Col(
-#                     [
-#                         dbc.Spinner(
-#                             dcc.Graph(
-#                                 id="cag-tax-graph"
-#                             )
-#                         ),
-#                         html.Br(),
-#                         html.Br(),
-#                         html.Div(
-#                             dash_table.DataTable(
-#                                 id='cag-function-table',
-#                                 columns=[
-#                                     {"name": "Functional Label (from eggNOG)", "id": "label"}
-#                                 ],
-#                                 data=pd.DataFrame([
-#                                     {"label": "none"}
-#                                 ]).to_dict("records"),
-#                                 style_table={
-#                                     'minWidth': '75%',
-#                                 },
-#                                 style_header={
-#                                     "backgroundColor": "rgb(2,21,70)",
-#                                     "color": "white",
-#                                     "textAlign": "center",
-#                                 },
-#                                 page_action='native',
-#                                 page_size=10,
-#                                 filter_action='native',
-#                                 sort_action='native',
-#                                 hidden_columns=[],
-#                                 css=[{"selector": ".show-hide",
-#                                     "rule": "display: none"}],
-#                             ),
-#                             id="cag-function-table-div"
-#                         ),
-#                         html.Br(),
-#                         html.Br(),
-#                         html.Div(
-#                             dash_table.DataTable(
-#                                 id='cag-genome-table',
-#                                 columns=[
-#                                     {"name": "Name", "id": "name"},
-#                                     {"name": "Number of genes aligned", "id": "n_genes"},
-#                                     {"name": "Proportion of CAG", "id": "cag_prop"},
-#                                     {"name": "CAG ID", "id": "CAG"},
-#                                 ],
-#                                 data=pd.DataFrame([
-#                                     {
-#                                         "name": "none",
-#                                         "n_genes": "none",
-#                                         "cag_prop": "none",
-#                                         "CAG": "none",
-#                                     }
-#                                 ]).to_dict("records"),
-#                                 style_table={
-#                                     'minWidth': '75%',
-#                                 },
-#                                 style_header={
-#                                     "backgroundColor": "rgb(2,21,70)",
-#                                     "color": "white",
-#                                     "textAlign": "center",
-#                                 },
-#                                 page_action='native',
-#                                 page_size=10,
-#                                 filter_action='native',
-#                                 sort_action='native',
-#                                 hidden_columns=[],
-#                                 css=[{"selector": ".show-hide",
-#                                     "rule": "display: none"}],
-#                             ),
-#                             id="cag-genome-table-div"
-#                         )
-#                     ],
-#                     width=10,
-#                     align="center",
-#                 ),
-#                 dbc.Col(width=1),
-#             ]),
-#         ],
-#         help_text="""
-# Construct a summary of the abundance of a single CAG in relation to the metadata
-# assigned to each specimen. By selecting different types of plots, you may flexibly
-# construct any type of summary display.
+        self.long_name = ""
+        self.short_name = ""
+        self.plot_list = []
+        self.defaults = dict(
 
-# The taxonomic annotation of a given CAG is shown as the proportion of
-# genes which contain a given taxonomic annotation, out of all genes which
-# were given any taxonomic annotation.
+        )
+        self.dynamic_defaults = dict()
 
-# Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
-#         """
-#     )
-# #####################
-# # / PLOT CAG CARD #
-# #####################
+        self.help_text = """
+        """
 
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
 
-# ##############################
-# # ANNOTATION ENRICHMENT CARD #
-# ##############################
-# def annotation_enrichment_card():
-#     return card_wrapper(
-#         "Estimated Coefficients by Annotation",
-#         [
-#             dbc.Row([
-#                 dbc.Col(
-#                     dbc.Spinner(
-#                         dcc.Graph(id="annotation-enrichment-graph")
-#                     ),
-#                     width=8,
-#                     align="center",
-#                 ),
-#                 dbc.Col(
-#                     [
-#                         html.Label("Annotation Group"),
-#                         dcc.Dropdown(
-#                             id="annotation-enrichment-type",
-#                             options=[
-#                                 {'label': 'Functional', 'value': 'eggNOG_desc'},
-#                                 {'label': 'Taxonomic Species', 'value': 'species'},
-#                                 {'label': 'Taxonomic Genus', 'value': 'genus'},
-#                                 {'label': 'Taxonomic Family', 'value': 'family'},
-#                             ],
-#                             value='eggNOG_desc',
-#                         ),
-#                         html.Br(),
-#                     ] + corncob_parameter_dropdown(
-#                         group="annotation-enrichment"
-#                     ) + basic_slider(
-#                         "annotation-enrichment-plotn",
-#                         "Number of Annotations per Plot",
-#                         min_value=10,
-#                         max_value=50,
-#                         default_value=20,
-#                         marks=[10, 30, 50]
-#                     ) + [
-#                         html.Label("Show Positive / Negative"),
-#                         dcc.Dropdown(
-#                             id="annotation-enrichment-show-pos-neg",
-#                             options=[
-#                                 {'label': 'Both', 'value': 'both'},
-#                                 {'label': 'Positive', 'value': 'positive'},
-#                                 {'label': 'Negative', 'value': 'negative'},
-#                             ],
-#                             value="both",
-#                         ),
-#                         html.Br(),
-#                         dbc.Button(
-#                             "Next", 
-#                             id='annotation-enrichment-button-next', 
-#                             n_clicks=0,
-#                             color="light",
-#                         ),
-#                         dbc.Button(
-#                             "Previous", 
-#                             id='annotation-enrichment-button-previous', 
-#                             n_clicks=0,
-#                             color="light",
-#                         ),
-#                         dbc.Button(
-#                             "First", 
-#                             id='annotation-enrichment-button-first', 
-#                             n_clicks=0,
-#                             color="light",
-#                         ),
-#                         html.Div(
-#                             children=[1],
-#                             id='annotation-enrichment-page-num',
-#                             style={"display": "none"},
-#                         ),
-#                     ],
-#                     width=4,
-#                     align="center",
-#                 )
-#             ])
-#         ],
-#         help_text="""
-# After estimating the coefficient of association for every individual CAG, we are able to
-# aggregate those estimated coefficients on the basis of the annotations assigned to the genes
-# found within those CAGs.
+        # Read the manifest in order to render the card
+        manifest_df = glam_io.get_manifest(dataset_uri)
 
-# The reasoning for this analysis is that a single CAG may be strongly associated with
-# parameter X, and that CAG may contain a gene which has been taxonomically assigned to
-# species Y. In that case, we are interested in testing whether _all_ CAGs which contain
-# any gene which has been taxonomically assigned to the same species Y are estimated to
-# have an association with parameter X _in aggregate_.
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
 
-# In this analysis we show the estimated coefficient of association for the groups of CAGs
-# constructed for every unique annotation in the analysis. This may include functional
-# annotations generated with eggNOG-mapper, as well as taxonomic assignments generated
-# by alignment against RefSeq.
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
 
-# Note: Click on the camera icon at the top of this plot (or any on this page) to save an image to your computer.
-#         """
-#     )
-# ################################
-# # / ANNOTATION ENRICHMENT CARD #
-# ################################
-
-
-# ###########################
-# # GENOME ASSOCIATION CARD #
-# ###########################
-# def genome_association_card():
-#     return card_wrapper(
-#         "Genome Association Summary",
-#         [
-#             dbc.Row([
-#                 dbc.Col(
-#                     dbc.Spinner(
-#                         dcc.Graph(
-#                             id="genome-association-scatterplot"
-#                         )
-#                     ),
-#                     width=8,
-#                     align="center"
-#                 ),
-#                 dbc.Col(
-#                     [
-#                         html.Label("Parameter"),
-#                         dcc.Dropdown(
-#                             id="genome-association-parameter",
-#                             options=[],
-#                             value=None,
-#                         ),
-#                         html.Br(),
-#                         dcc.Dropdown(
-#                             id='genome-association-prop-abs',
-#                             options=[
-#                                 {'label': 'Proportion of genes   ', 'value': 'prop'},
-#                                 {'label': 'Number of genes', 'value': 'num'},
-#                             ],
-#                             value="prop",
-#                         )
-#                     ],
-#                     width=4,
-#                     align="center"
-#                 )
-#             ])
-#         ],
-#         custom_id="genome-association-card",
-#         help_text="""
-# After aligning genes against a set of genomes, we are able to
-# annotate genomes on the basis of how many genes align which
-# belong to CAGs which are associated with any of the parameters
-# in the associated experiment. 
-
-# Operationally, the user sets a cuttoff _alpha_ value when they
-# execute the genome alignment module which generated this dataset.
-# That _alpha_ value is used as a cutoff for this genome summary display
-# in which any CAG with an FDR-BH adjusted p-value below that threshold
-# are annotated as "highly associated" with that parameter. In order
-# to summarize the genomes, we can then display the number (or proportion)
-# of genes in the genome which are "highly associated."
-
-# While this approach is somewhat arbitrary, it can be used to quickly
-# identify those genomes which may contain the genetic elements that
-# are most strongly associated with a phenotype of interest.
-
-# Having identified a genome of interest, the individual gene alignments
-# can be inspected in the Genome Alignment Details panel of this browser.
-#         """
-#     )
-# #############################
-# # \ GENOME ASSOCIATION CARD #
-# #############################
+        return self.card_wrapper(
+            dataset_id,
+            [],
+        )
 
 
 # ###########################
@@ -2501,156 +2483,4 @@ class CardTemplate(AnalysisCard):
 
 
 
-
-
-# def plot_type_dropdown(
-#     dropdown_id,
-#     label_text='Plot Type',
-#     options=[
-#         {'label': 'Points', 'value': 'scatter'},
-#         {'label': 'Histogram', 'value': 'hist'},
-#     ],
-#     default_value="scatter"
-# ):
-#     return [
-#         html.Label(label_text),
-#         dcc.Dropdown(
-#             id=dropdown_id,
-#             options=options,
-#             value=default_value
-#         ),
-#         html.Br(),
-#     ]
-
-
-# def ordination_pc_slider(
-#     slider_id,
-#     label_text,
-#     default_value
-# ):
-#     return basic_slider(
-#         slider_id,
-#         label_text,
-#         min_value=1,
-#         max_value=10,
-#         default_value=default_value,
-#         marks=[1, 5, 10],
-#         included=False
-#     )
-
-
-# def basic_slider(
-#     slider_id,
-#     label_text,
-#     min_value=1,
-#     max_value=10,
-#     step_value=1,
-#     default_value=1,
-#     marks=[],
-#     included=True
-# ):
-#     return [
-#         html.Div([
-#             html.Label(label_text),
-#             dcc.Slider(
-#                 id=slider_id,
-#                 min=min_value,
-#                 max=max_value,
-#                 step=step_value,
-#                 marks={
-#                     str(n): str(n)
-#                     for n in marks
-#                 },
-#                 value=default_value,
-#                 included=included
-#             ),
-#             html.Br()
-#         ], id="%s-div" % slider_id)
-#     ]
-
-
-# def corncob_parameter_dropdown(
-#     label_text='Parameter',
-#     group="none"
-# ):
-#     return [
-#         html.Label(label_text),
-#         dcc.Dropdown(
-#             id={
-#                 "type": "corncob-parameter-dropdown",
-#                 "group": group,
-#             },
-#             options=[
-#                 {'label': 'None', 'value': 'none'},
-#             ],
-#             value="none"
-#         ),
-#         html.Br(),
-#     ]
-
-
-# def volcano_pvalue_slider(label_text='P-Value Filter (-log10)', group="none"):
-#     """This slider is missing the max and marks, which will be updated by a callback."""
-#     return [
-#         html.Label(label_text),
-#         dcc.Slider(
-#             id={
-#                 "type": "corncob-pvalue-slider",
-#                 "group": group,
-#             },
-#             min=0,
-#             step=0.1,
-#             value=1,
-#             included=False,
-#         ),
-#         html.Br()
-#     ]
-
-
-# def cag_size_slider(slider_id, label_text='CAG Size Filter'):
-#     return [
-#         html.Label(label_text),
-#         dcc.RangeSlider(
-#             id={
-#                 "type": "cag-size-slider",
-#                 "name": slider_id
-#             },
-#             min=0,
-#             max=3,
-#             step=0.1,
-#             marks={
-#                 str(n): str(10**n)
-#                 for n in range(3)
-#             },
-#             value=[
-#                 0,
-#                 3
-#             ]
-#         ),
-#         html.Br()
-#     ]
-
-
-# def cag_metric_slider(slider_id, metric, label_text):
-#     return [
-#         html.Label(label_text),
-#         dcc.RangeSlider(
-#             id={
-#                 "type": "cag-metric-slider",
-#                 "metric": metric,
-#                 "name": slider_id
-#             },
-#             min=0,
-#             max=1,
-#             step=0.1,
-#             marks={
-#                 str(n): str(round(n, 2))
-#                 for n in np.arange(
-#                     0, 1, 0.2
-#                 )
-#             },
-#             value=[0, 1]
-#         ),
-#         html.Br()
-#     ]
 

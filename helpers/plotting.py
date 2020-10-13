@@ -31,7 +31,11 @@ class GLAM_PLOTTING:
             "ordination-graph": self.ordination_graph,
             "cag-descriptive-stats-graph": self.cag_summary_plot,
             "cag-abund-heatmap": self.cag_abundance_heatmap,
-            "cag-annot-heatmap": self.cag_annotation_heatmap
+            "cag-annot-heatmap": self.cag_annotation_heatmap,
+            "volcano-plot": self.volcano_plot,
+            "single-cag-graph": self.single_cag_plot,
+            "genome-association-scatterplot": self.genome_association_plot,
+            "tax-sunburst": self.taxononmy_sunburst,
         }
 
     ##################################
@@ -1386,7 +1390,239 @@ class GLAM_PLOTTING:
 
         return fig
 
+    def volcano_plot(
+        self,
+        glam_io=None,
+        args=None,
+        dataset_uri=None,
+    ):
+        """Render a volcano plot."""
         
+        # Parse the arguments needed to render the plot
+        parameter = args["parameter"]
+        min_cag_size = int(args["min_cag_size"])
+        max_cag_size = int(args["max_cag_size"])
+        max_pvalue = float(args["max_pvalue"])
+        fdr = args["fdr"]
+        compare_against = args["compare_against"]
+
+        # Read the corncob results
+        corncob_df = glam_io.get_cag_associations(
+            dataset_uri, parameter
+        )
+        if corncob_df is None:
+            return go.Figure()
+
+        # Get the size of all CAGs
+        cag_sizes = glam_io.get_cag_annotations(dataset_uri)["size"]
+
+        # Filter the corncob_df by CAG size
+        corncob_df = corncob_df.assign(
+            size = cag_sizes
+        )
+
+
+        corncob_df = corncob_df.query(
+            f"size >= {min_cag_size}"
+        )
+        # The maximum size == 0 indicates no filtering
+        if max_cag_size > 0:
+            corncob_df = corncob_df.query(
+                f"size <= {max_cag_size}"
+            )
+
+        # If a comparison parameter was selected, plot the p-values against each other
+        if compare_against != "coef":
+
+            # It must be another parameter
+            m = f"Unexpected {compare_against}"
+            assert compare_against.startswith("parameter::"), m
+
+            # Parse the name of the comparison parameter
+            comparison_parameter = compare_against[len("parameter::"):]
+
+            # Read the corncob results for this parameter
+            comparison_df = glam_io.get_cag_associations(
+                dataset_uri, comparison_parameter
+            )
+            if comparison_df is None:
+                return go.Figure()
+    
+            return draw_double_volcano_graph(
+                corncob_df,
+                parameter,
+                comparison_df,
+                comparison_parameter,
+                max_pvalue,
+                fdr,
+            )
+        else:
+            return draw_volcano_graph(
+                corncob_df,
+                parameter,
+                max_pvalue,
+                fdr,
+            )
+
+    def single_cag_plot(
+        self,
+        glam_io=None,
+        args=None,
+        dataset_uri=None,
+    ):
+        """Plot the abundance of a single CAG."""
+
+        # Format the arguments
+        xaxis = args["xaxis"]
+        plot_type = args["plot_type"]
+        color = args["color_by"]
+        facet = args["facet"]
+        log_scale = args["log10"]
+        cag_id = int(args["cag_id"])
+
+        # Read in the manifest
+        manifest_df = glam_io.get_manifest(dataset_uri)
+
+        # Filter out any masked samples
+        manifest_df = self.filter_manifest(manifest_df, args)
+
+        # Read in the CAG abundances
+        cag_abund_df = glam_io.get_cag_abundances(dataset_uri)
+
+        # Add the abundance of this particular CAG to the manifest
+        plot_df = manifest_df.assign(
+            CAG_ABUND = cag_abund_df.loc[cag_id]
+        )
+
+        # Set up the title of the plot
+        plot_title = "CAG {}".format(cag_id)
+
+        return draw_single_cag_graph(
+            plot_df,
+            plot_title,
+            xaxis,
+            plot_type,
+            color,
+            facet,
+            log_scale
+        )
+
+    def taxononmy_sunburst(
+        self,
+        glam_io=None,
+        args=None,
+        dataset_uri=None,
+    ):
+
+        # Get the CAG ID
+        cag_id = int(args["cag_id"])
+
+        # Get the taxonomic assignment of genes in this CAG
+        cag_tax_df = glam_io.get_cag_taxa(
+            dataset_uri, 
+            cag_id, 
+            "all"
+        )
+
+        # Render the plot
+        return draw_taxonomy_sunburst(
+            cag_tax_df,
+            f"CAG {cag_id}"
+        )
+        
+
+    def genome_association_plot(
+        self,
+        glam_io=None,
+        args=None,
+        dataset_uri=None,
+    ):
+
+        # Get the parameter name
+        parameter = args["parameter"]
+
+        # Get the name of the metric to compare against
+        compare_to = args["compare_to"]
+
+        # Get the genome association with this parameter
+        plot_df = glam_io.get_genome_associations(dataset_uri, parameter)
+
+        # Get the manifest for all genomes
+        genome_manifest = glam_io.get_genome_manifest(dataset_uri)
+        genome_names = genome_manifest.set_index("id")["name"]
+
+        # If `compare_to` is not "mean_est_coef", then it must be another parameter
+        if compare_to == "mean_est_coef":
+
+            # Make the plotting table by adding the genome name to the plotting table
+            plot_df = plot_df.assign(
+                genome_name = plot_df["genome_id"].apply(genome_names.get)
+            )
+
+            # Set up the scatterplot
+            fig = go.Figure(
+                data=go.Scattergl(
+                    x = plot_df["mean_est_coef"],
+                    y = plot_df["mean_wald"],
+                    ids = plot_df["genome_id"],
+                    text = plot_df["genome_name"],
+                    hovertemplate = "Genome: %{text}<br>Genome ID: %{id}<br>Mean Estimated Coefficient: %{x}<br>Mean Wald Metric: %{y}<br><extra></extra>",
+                    mode = "markers",
+                    marker_color = "LightSkyBlue",
+                    opacity = 0.5,
+                )
+            )
+            xaxis_title="Mean Estimated Coefficient"
+            yaxis_title="Mean Wald Metric"
+            title_text=f"Summary of per-genome association with {parameter}"
+
+        else:
+
+            # Make the plotting table by combining both parameters
+            plot_df = pd.DataFrame({
+                compare_to: glam_io.get_genome_associations(
+                    dataset_uri, 
+                    compare_to
+                ).set_index("genome_id")["mean_wald"],
+                parameter: plot_df.set_index("genome_id")["mean_wald"]
+            }).assign(
+                genome_name = genome_names
+            )
+
+            # Set up the scatterplot
+            fig = go.Figure(
+                data=go.Scattergl(
+                    x = plot_df[compare_to],
+                    y = plot_df[parameter],
+                    ids = plot_df.index.values,
+                    text = plot_df["genome_name"],
+                    hovertemplate = "Genome: %{text}<br>Genome ID: %{id}<br>Mean Wald (x-axis): %{x}<br>Mean Wald (y-axis): %{y}<br><extra></extra>",
+                    mode = "markers",
+                    marker_color = "LightSkyBlue",
+                    opacity = 0.5,
+                )
+            )
+            xaxis_title=f"Mean Wald Metric ({compare_to})"
+            yaxis_title=f"Mean Wald Metric ({parameter})"
+            title_text=f"Summary of per-genome association with {parameter} and {compare_to}"
+
+        fig.update_layout(
+            xaxis_title=xaxis_title,
+            yaxis_title=yaxis_title,
+            xaxis_zeroline=True,
+            yaxis_zeroline=True,
+            title={
+                'text': title_text,
+                'y': 0.9,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top',
+            },
+            template="simple_white",
+        )
+
+        return fig
+
 def calc_clr(v):
     """Calculate the CLR for a vector of abundances."""
     # Index of non-zero values
@@ -3130,38 +3366,14 @@ def draw_cag_annotation_panel(
 #################
 def draw_volcano_graph(
     corncob_df,
-    cag_summary_df,
-    parameter, 
-    comparison_parameter,
-    cag_size_range,
-    neg_log_pvalue_min, 
-    fdr_on_off, 
+    parameter,
+    max_pvalue,
+    fdr_on_off,
 ):
-    if corncob_df is None or neg_log_pvalue_min is None:
-        return go.Figure()
-
-    # Filter the corncob_df by CAG size
-    corncob_df = corncob_df.assign(
-        size = cag_summary_df["size"]
-    ).query(
-        "size >= {}".format(10**cag_size_range[0])
-    ).query(
-        "size <= {}".format(10**cag_size_range[1])
-    )
-    
-    # If a comparison parameter was selected, plot the p-values against each other
-    if comparison_parameter != "coef":
-        return draw_double_volcano_graph(
-            corncob_df,
-            parameter,
-            comparison_parameter,
-            neg_log_pvalue_min,
-            fdr_on_off,
-        )
 
     # Subset to the pvalue threshold
     plot_df = corncob_df.query(
-        "neg_log10_pvalue >= {}".format(neg_log_pvalue_min)
+        f"p_value <= {max_pvalue}"
     )
 
     if fdr_on_off == "off":
@@ -3205,8 +3417,9 @@ def draw_volcano_graph(
 def draw_double_volcano_graph(
     corncob_df,
     parameter, 
+    comparison_df,
     comparison_parameter,
-    neg_log_pvalue_min, 
+    max_pvalue, 
     fdr_on_off, 
 ):
 
@@ -3214,18 +3427,18 @@ def draw_double_volcano_graph(
     plot_y = "wald"
     axis_suffix = "Wald statistic"
 
-    # Subset to these two parameters and pivot to be wide
-    plot_df = pd.concat([
-        corncob_df.query(
-            "parameter == '{}'".format(param_name)
-        ).query(
-            "neg_log10_pvalue >= {}".format(neg_log_pvalue_min)
-        )
-        for param_name in [parameter, comparison_parameter]
-    ]).pivot_table(
-        index="CAG",
-        columns="parameter",
-        values=plot_y
+    # Make a wide DF with the values for both parameters
+    plot_df = pd.DataFrame(
+        {
+            parameter: corncob_df.query(
+                f"p_value <= {max_pvalue}"
+            )[plot_y],
+            comparison_parameter: comparison_df.query(
+                f"p_value <= {max_pvalue}"
+            )[plot_y]
+        }
+    ).dropna(
+        # Remove any CAGs which do not meet all thresholds
     )
 
     # Set the hover text
@@ -3235,19 +3448,23 @@ def draw_double_volcano_graph(
             "CAG {}".format(cag_id),
             "<br>".join([
                 "<br>".join([
-                    "Parameter: {}".format(r["parameter"]),
+                    "Parameter: {}".format(param),
                     "Estimated Coefficient: {} +/- {}".format(
-                        r["estimate"],
-                        r["std_error"]
+                        stats_df.loc[cag_id, "estimate"],
+                        stats_df.loc[cag_id, "std_error"]
                     ),
-                    "p-value: {:.2E}".format(r["p_value"]),
-                    "Wald: {}".format(r["wald"])
+                    "p-value: {:.2E}".format(stats_df.loc[cag_id, "p_value"]),
+                    "Wald: {}".format(stats_df.loc[cag_id, "wald"])
                 ])
-                for _, r in cag_corncob.iterrows()
+                for param, stats_df in [
+                    (parameter, corncob_df),
+                    (comparison_parameter, comparison_df),
+                ]
             ])
         ])
-        for cag_id, cag_corncob in corncob_df.groupby("CAG")
+        for cag_id in plot_df.index.values
     }
+
     text = [
         text_dict.get(cag_id, "")
         for cag_id in plot_df.index.values
@@ -3468,7 +3685,6 @@ def draw_taxonomy_sunburst(
 def draw_single_cag_graph(
     plot_df,
     plot_title,
-    axis_label,
     xaxis,
     plot_type,
     color,
@@ -3478,10 +3694,13 @@ def draw_single_cag_graph(
 
     # Make a list of the columns needed for plotting
     columns_for_plotting = [xaxis, "CAG_ABUND"]
-    if color != "none":
+    if color != 'None' and color is not None:
         columns_for_plotting.append(color)
-    if facet != "none":
+    if facet != 'None' and facet is not None:
         columns_for_plotting.append(facet)
+
+    # Set up the axis label
+    axis_label = "Relative Abundance"
 
     # Drop any samples which are missing the required data
     plot_df = plot_df.reindex(
@@ -3496,11 +3715,11 @@ def draw_single_cag_graph(
     )
     if plot_df.shape[0] == 0 or (plot_df["CAG_ABUND"] > 0).sum() == 0:
         return empty_fig
-    if xaxis == color and xaxis != "none":
+    if xaxis == color and xaxis != "None":
         return empty_fig
-    if xaxis == facet and xaxis != "none":
+    if xaxis == facet and xaxis != "None":
         return empty_fig
-    if color == facet and color != "none":
+    if color == facet and color != "None" and color is not None:
         return empty_fig
 
     # For plotting on a log scale, replace zero values with the minimum
@@ -3529,8 +3748,8 @@ def draw_single_cag_graph(
         plot_df.sort_values(by=xaxis),
         x = xaxis,
         y = "CAG_ABUND",
-        color = None if color == "none" else color,
-        facet_col = None if facet == "none" else facet
+        color = color if color != "None" else None,
+        facet_col = facet if facet != "None" else None,
     )
 
     # Apply the log transform
