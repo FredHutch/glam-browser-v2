@@ -9,7 +9,7 @@ build_test:
     - |
         if docker ps -a|tr -s ' '|rev|cut -d ' ' -f 1|rev|grep -q glam-browser-v2
         then
-        docker stop glam-browser-v2 && docker rm --force glam-browser-v2
+        docker stop glam-browser-v2 && docker rm --force glam-browser-v2 && sleep 15
         fi
     - >-
         docker run 

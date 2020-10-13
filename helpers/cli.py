@@ -15,11 +15,13 @@ def open_glam_db(args):
         db_port=args.db_port,
     )
 
+
 def glam_index(fp=None, uri=None):
     GLAM_INDEX(
         input_hdf=fp,
         output_base=uri,
     ).index()
+
 
 def main():
     """Entrypoint for the CLI."""

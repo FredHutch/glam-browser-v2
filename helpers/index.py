@@ -421,7 +421,35 @@ class GLAM_INDEX:
         ).assign(
             group=df["CAG"].apply(lambda v: v % 1000)
         ).groupby("group"):
-            yield group_ix, group_df.drop(columns="group")
+            yield "CAG", group_ix, group_df.drop(columns="group")
+
+        # Now read in the manifest of genomes
+        key_name = "/genomes/manifest"
+
+        # Make sure the data is in the cache
+        self.add_to_cache(key_name)
+
+        # Load the data from the cache
+        genome_manifest_df = self.cache[key_name]
+
+        # Set the index for the genome based on the position of the 'id'
+        genome_ix = pd.Series(
+            list(range(genome_manifest_df.shape[0])),
+            index=genome_manifest_df["id"].values
+        ).apply(
+            lambda v: v % 1000
+        )
+
+        # Yield each of the tables for each genome
+        for genome_id, genome_df in df.reindex(
+            columns=[
+                "CAG",
+                "genome",
+                "n_genes",
+                "cag_prop",
+            ]
+        ).groupby("genome"):
+            yield "genome", genome_ix.loc[genome_id], genome_df.sort_values(by="n_genes", ascending=False)
 
     def parse_top_genome_containment(self, max_n_cags=250000, min_cag_prop=0.25):
         """Format a table of the top genome containment per CAG."""
@@ -684,11 +712,16 @@ class GLAM_INDEX:
         )
 
         # Read in the genome containments
-        for group_ix, group_df in self.parse_genome_containment():
+        for group_name, group_ix, group_df in self.parse_genome_containment():
+            # the iterator will yield containment scores sharded by either
+            # CAG or genome index
             if group_ix is not None:
+
+                assert group_name in ["genome", "CAG"], f"Did not recognize {group_name}"
+
                 self.write(
                     group_df,
-                    "genome_containment/{}".format(group_ix)
+                    f"genome_containment/{group_name}/{group_ix}"
                 )
 
         # Write out the table of the top genome hits for each CAG
