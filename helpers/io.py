@@ -41,9 +41,11 @@ class GLAM_IO:
                 max_len=100,
                 max_age_seconds=self.cache_timeout
             )
+            self.using_redis = False
         else:
             # Otherwise attach the redis cache to this object
             self.cache = cache
+            self.using_redis = True
 
 
         # # Set the index of genome IDs, keyed by dataset
@@ -81,7 +83,10 @@ class GLAM_IO:
 
         # Store in the cache
         logging.info(f"Saving to the cache - {cache_key}")
-        self.cache.set(cache_key, df, timeout=self.cache_timeout)
+        if self.using_redis:
+            self.cache.set(cache_key, df, timeout=self.cache_timeout)
+        else:
+            self.cache[cache_key] = df
 
         # Return the value
         return df
@@ -133,7 +138,10 @@ class GLAM_IO:
 
         # Store in the cache
         logging.info(f"Saving to the cache - {cache_key}")
-        self.cache.set(cache_key, keys, timeout=self.cache_timeout)
+        if self.using_redis:
+            self.cache.set(cache_key, keys, timeout=self.cache_timeout)
+        else:
+            self.cache[cache_key] = keys
 
         return self.filter_keys_by_prefix(keys, prefix=prefix)
 
@@ -313,11 +321,14 @@ class GLAM_IO:
             )
 
             logging.info(f"Saving to the cache - {cache_key}")
-            self.cache.set(
-                cache_key,
-                genome_index_list,
-                timeout=self.cache_timeout
-            )
+            if self.using_redis:
+                self.cache.set(
+                    cache_key,
+                    genome_index_list,
+                    timeout=self.cache_timeout
+                )
+            else:
+                self.cache[cache_key] = genome_index_list
 
         # Get the index for this particular genome
         genome_ix = genome_index_list.loc[genome_id]

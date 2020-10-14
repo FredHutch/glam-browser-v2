@@ -48,9 +48,11 @@ class GLAM_DB:
                 max_len=100, 
                 max_age_seconds=self.cache_timeout
             )
+            self.using_redis = False
         else:
             # Otherwise attach the redis cache to this object
             self.cache = cache
+            self.using_redis = True
 
     def __del__(self):
         self.close()
@@ -133,11 +135,14 @@ class GLAM_DB:
             df = pd.read_sql("SELECT * FROM {};".format(table_name), conn)
 
         # Add to the cache
-        self.cache.set(
-            cache_key, 
-            df,
-            timeout=self.cache_timeout,
-        )
+        if self.using_redis:
+            self.cache.set(
+                cache_key, 
+                df,
+                timeout=self.cache_timeout,
+            )
+        else:
+            self.cache[cache_key] = df
 
         return df
 
