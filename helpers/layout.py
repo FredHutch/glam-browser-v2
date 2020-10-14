@@ -2229,14 +2229,18 @@ class GenomeContainmentHeatmap(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Genomes Similar to Single CAG"
+        self.long_name = "Genome Containment Heatmap: Show Genomes Containing Genes from a Single CAG"
         self.short_name = "genome_containment_heatmap"
         self.plot_list = []
         self.defaults = dict(
             genome_n = 20,
             cag_n = 20,
         )
-        self.dynamic_defaults = dict()
+        self.dynamic_defaults = dict(
+            cag_id = lambda glam_io, dataset_uri: glam_io.get_top_genome_containment(
+                dataset_uri
+            ).index.values[0]
+        )
 
         self.help_text = """
 Every CAG was aligned against a collection of reference microbial
@@ -2269,8 +2273,9 @@ to that set of selected genomes.
                         self.plot_div(
                             "genome-containment-heatmap"
                         ),
-                        width=8
-                    ),
+                    )
+                ]),
+                dbc.Row([
                     dbc.Col(
                         self.input_field(
                             label="CAG ID",
@@ -2280,7 +2285,11 @@ to that set of selected genomes.
                             variable_type=int,
                             min_value=0,
                             max_value=250000,
-                        ) + self.input_field(
+                        ),
+                        width=4
+                    ),
+                    dbc.Col(
+                        self.input_field(
                             label="Number of Genomes",
                             description="Number of genomes to display",
                             key="genome_n",
@@ -2288,7 +2297,11 @@ to that set of selected genomes.
                             variable_type=int,
                             min_value=1,
                             max_value=150,
-                        ) + self.input_field(
+                        ),
+                        width=4
+                    ),
+                    dbc.Col(
+                        self.input_field(
                             label="Number of CAGs",
                             description="Number of CAGs to display",
                             key="cag_n",

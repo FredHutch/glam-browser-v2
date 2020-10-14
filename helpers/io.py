@@ -284,8 +284,8 @@ class GLAM_IO:
         if self.genome_ix.get(base_path) is None:
             logging.info(f"Fetching genome index for {base_path}")
             self.genome_ix[base_path] = pd.Series(
-                self.get_genome_manifest(base_path)["id"].values,
-                index=range(self.get_genome_manifest(base_path).shape[0])
+                range(self.get_genome_manifest(base_path).shape[0]),
+                index=self.get_genome_manifest(base_path)["id"].values,
             ).apply(
                 lambda ix: ix % 1000
             )
@@ -295,7 +295,7 @@ class GLAM_IO:
 
         # Read the containment for this genome
         df = self.read_item(
-            os.path.join(base_path, "genome_containment/CAG/"),
+            os.path.join(base_path, "genome_containment/genome/"),
             f"{genome_ix}.feather"
         )
 
@@ -304,7 +304,7 @@ class GLAM_IO:
             return None
 
         return df.query(
-            f"genome == {genome_id}"
+            f"genome == '{genome_id}'"
         ).drop(columns="genome")
 
     def get_top_genome_containment(self, base_path):

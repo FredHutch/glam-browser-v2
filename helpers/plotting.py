@@ -36,6 +36,7 @@ class GLAM_PLOTTING:
             "single-cag-graph": self.single_cag_plot,
             "genome-association-scatterplot": self.genome_association_plot,
             "tax-sunburst": self.taxononmy_sunburst,
+            "genome-containment-heatmap": self.genome_containment_heatmap,
         }
 
     ##################################
@@ -1619,6 +1620,139 @@ class GLAM_PLOTTING:
                 'yanchor': 'top',
             },
             template="simple_white",
+        )
+
+        return fig
+
+    
+    def genome_containment_heatmap(
+        self,
+        glam_io=None,
+        args=None,
+        dataset_uri=None,
+        min_cag_prop=0.25,
+    ):
+        # Get the CAG ID which has been selected
+        cag_id = int(args["cag_id"])
+
+        # Get the maximum number of genomes and CAGs to display
+        genome_n = int(args["genome_n"])
+        cag_n = int(args["cag_n"])
+
+        # Get the genome names to plot
+        genome_names = glam_io.get_genome_manifest(
+            dataset_uri
+        ).set_index("id")["name"]
+
+        # Get the size of each CAG in the plot
+        cag_sizes = glam_io.get_cag_annotations(dataset_uri)["size"]
+
+        # Keep a list of the CAGs which we are going to plot
+        cags_to_plot = [cag_id]
+        # Keep a list of the genomes which we are going to plot
+        genomes_to_plot = []
+
+        # Get the genomes which were aligned by this CAG
+        # and pick up to `genome_n` genomes to plot
+        cag_genome_containment = glam_io.get_cag_genome_containment(
+            dataset_uri, cag_id
+        )
+
+        # If there are no genomes to plot, stop
+        if cag_genome_containment is None:
+            fig = go.Figure()
+            fig.update_layout(
+                template="simple_white",
+                title_text = f"CAG {cag_id} - no alignments found"
+            )
+            return fig
+
+        # implicit else
+
+        for _, r in cag_genome_containment.iterrows():
+            # Skip genomes which are below the threshold
+            if r["cag_prop"] < min_cag_prop:
+                continue
+            # Stop when we read `genome_n`
+            elif len(genomes_to_plot) >= genome_n:
+                break
+            # Add this genome to the list
+            else:
+                genomes_to_plot.append(r["genome"])
+
+        # If there are no genomes to plot, stop
+        if len(genomes_to_plot) == 0:
+            fig = go.Figure()
+            fig.update_layout(
+                template="simple_white",
+                title_text = f"CAG {cag_id} - no alignments found"
+            )
+            return fig
+
+        # Get all of the CAGs which align to this set of genomes
+        plot_df = pd.concat([
+            glam_io.get_genome_cag_containment(
+                dataset_uri,
+                genome_id
+            ).assign(
+                genome = genome_id
+            )
+            for genome_id in genomes_to_plot
+        ])
+
+        # Pick CAGs to plot based on a score, which is the sum
+        # of the `cag_prop` metric across all of the genomes here
+        for cag_id in plot_df.query(
+            f"cag_prop >= {min_cag_prop}"
+        ).groupby(
+            "CAG"
+        )[
+            "cag_prop"
+        ].sum(
+        ).sort_values(
+            ascending=False
+        ).index.values:
+            if cag_id in cags_to_plot:
+                continue
+            elif len(cags_to_plot) >= cag_n:
+                break
+            else:
+                cags_to_plot.append(cag_id)
+
+        # Format the dataset in wide format
+        plot_df = pd.concat([
+            glam_io.get_cag_genome_containment(
+                dataset_uri,
+                cag_id
+            ).assign(
+                CAG=cag_id
+            )
+            for cag_id in cags_to_plot
+        ]).pivot_table(
+            columns="CAG",
+            index="genome",
+            values="n_genes"
+        ).fillna(
+            0
+        ).reindex(
+            index=genomes_to_plot,
+            columns=cags_to_plot,
+        )
+
+        # Calculate the proportion of each CAG which aligns
+        prop_df = 100. * plot_df / cag_sizes.reindex(index=plot_df.columns.values)
+
+        fig = go.Figure(
+            data=go.Heatmap(
+                z=prop_df.values,
+                x=["CAG {}".format(i) for i in plot_df.columns.values],
+                y=[genome_names.loc[i] for i in plot_df.index.values],
+                text=plot_df.values,
+                colorbar={"title": "Proportion of genes in CAG which align"},
+                colorscale='blues',
+                hovertemplate="%{x}<br>Genome: %{y}<br>%{text} genes align - %{z} percent",
+
+            )
         )
 
         return fig
