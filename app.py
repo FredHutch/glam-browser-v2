@@ -47,6 +47,17 @@ app.title = "GLAM Browser"
 app.config.suppress_callback_exceptions = True
 
 
+####################
+# SET UP THE CACHE #
+####################
+CACHE_CONFIG = {
+    # try 'filesystem' if you don't want to setup redis
+    'CACHE_TYPE': 'redis',
+    'CACHE_REDIS_URL': os.environ.get('REDIS_URL', 'redis://localhost:6379')
+}
+cache = Cache()
+cache.init_app(app.server, config=CACHE_CONFIG)
+
 ##################
 # CONFIGURE GLAM #
 ##################
@@ -62,6 +73,8 @@ glam_config = dict(
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
     aws_region=os.getenv("AWS_REGION"),
+    cache_timeout=int(os.getenv("CACHE_TIMEOUT", 3600)),
+    cache=cache,
 )
 
 # GLAM_DB will read from and write to the database

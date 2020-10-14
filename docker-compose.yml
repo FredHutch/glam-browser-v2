@@ -21,6 +21,15 @@ services:
       - GLAM2_AWS_SECRET_ACCESS_KEY
       - GLAM2_AWS_REGION
       - GLAM2_GTM_CONTAINER
+
+    environment:
+      REDIS_URL: "redis://redis:6379"
+
+  redis:
+    image: redis:latest
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
   
 secrets:
   GLAM2_DB_NAME:
