@@ -492,6 +492,10 @@ class GLAM_PLOTTING:
         # Filter out masked specimens from the manifest
         plot_manifest_df = self.filter_manifest(manifest_df, args)
 
+        # Make sure that all specimen names are strings
+        distances_df.index = distances_df.index.map(str)
+        plot_manifest_df.index = plot_manifest_df.index.map(str)
+
         # Filter those specimens out from the distance matrix
         distances_df = distances_df.reindex(
             index=plot_manifest_df.index.values
