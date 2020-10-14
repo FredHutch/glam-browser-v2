@@ -494,11 +494,13 @@ class GLAM_PLOTTING:
 
         # Make sure that all specimen names are strings
         distances_df.index = distances_df.index.map(str)
+        distances_df.columns = distances_df.columns.map(str)
         plot_manifest_df.index = plot_manifest_df.index.map(str)
 
         # Filter those specimens out from the distance matrix
         distances_df = distances_df.reindex(
-            index=plot_manifest_df.index.values
+            index=plot_manifest_df.index.values,
+            columns=plot_manifest_df.index.values,
         )
 
         if algorithm == "pca":
@@ -822,7 +824,9 @@ class GLAM_PLOTTING:
     ):
         # Get the data to plot
         cag_abund_df = glam_io.get_cag_abundances(dataset_uri)
+        cag_abund_df.columns = cag_abund_df.columns.map(str)
         manifest_df = glam_io.get_manifest(dataset_uri)
+        manifest_df.index = manifest_df.index.map(str)
 
         # Parse the arguments
         # Metadata selected to display marginally in the plot
