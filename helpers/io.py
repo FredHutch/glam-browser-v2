@@ -196,15 +196,46 @@ class GLAM_IO:
 
         return df.set_index("variable")["value"]
 
-    def get_cag_abundances(self, base_path):
+    def get_cag_abundance(self, base_path, cag_id):
         df = self.read_item(
             base_path, 
-            "cag_abundances.feather"
+            f"cag_abundances/CAG/{cag_id % 1000}.feather"
         )
         
         assert df is not None, "No data object was found"
 
-        return df.set_index("CAG")
+        return df.set_index("CAG").loc[cag_id]
+
+    def get_specimen_abundance(self, base_path, specimen_name):
+        # Get the index of this specimen
+        specimen_ix = self.get_specimen_ix(base_path, specimen_name)
+
+        # Read the table with this specimen
+        df = self.read_item(
+            base_path, 
+            f"cag_abundances/specimen/{specimen_ix}.feather"
+        )
+        
+        assert df is not None, "No data object was found"
+
+        m = f"Unexpected object contents (specimen: {specimen_name}, expected index: {specimen_ix}"
+        assert specimen_name in df.columns.values, m
+
+        return df.set_index("CAG")[specimen_name]
+
+    def get_specimen_ix(self, base_path, specimen_name):
+        """Get the index of a given specimen."""
+
+        # Get the manifest
+        manifest_df = self.get_manifest(base_path)
+
+        # Make sure that this specimen is in the manifest
+        assert specimen_name in manifest_df.index.values, "Invalid specimen name"
+
+        # Return the index position of this specimen name
+        for specimen_ix, n in enumerate(manifest_df.index.values):
+            if n == specimen_name:
+                return specimen_ix
 
     def get_cag_annotations(self, base_path):
         df = self.read_item(
