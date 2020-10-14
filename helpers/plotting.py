@@ -1491,8 +1491,15 @@ class GLAM_PLOTTING:
         cag_abund_df = glam_io.get_cag_abundances(dataset_uri)
 
         # Add the abundance of this particular CAG to the manifest
+        # We have to be careful at this step that the specimen label
+        # is always parsed as a string
+        manifest_df.index = manifest_df.index.map(str)
+        cag_abund = cag_abund_df.loc[cag_id]
+        cag_abund.index = cag_abund.index.map(str)
+
+        # Now add to the table
         plot_df = manifest_df.assign(
-            CAG_ABUND = cag_abund_df.loc[cag_id]
+            CAG_ABUND = cag_abund
         )
 
         # Set up the title of the plot
