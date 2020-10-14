@@ -3,7 +3,7 @@ services:
   glam:
     ports:
       - "8050:8050"
-    image: quay.io/fhcrc-microbiome/glam-browser-v2:latest
+    image: quay.io/fhcrc-microbiome/glam-browser-v2:redis-cache
 
     environment:
       - DB_NAME

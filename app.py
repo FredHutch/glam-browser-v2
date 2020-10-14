@@ -50,10 +50,12 @@ app.config.suppress_callback_exceptions = True
 ####################
 # SET UP THE CACHE #
 ####################
+redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')
+logging.info(f"Setting up redis cache at {redis_url}")
 CACHE_CONFIG = {
     # try 'filesystem' if you don't want to setup redis
     'CACHE_TYPE': 'redis',
-    'CACHE_REDIS_URL': os.environ.get('REDIS_URL', 'redis://localhost:6379')
+    'CACHE_REDIS_URL': redis_url
 }
 cache = Cache()
 cache.init_app(app.server, config=CACHE_CONFIG)
