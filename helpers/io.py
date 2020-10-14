@@ -19,6 +19,8 @@ class GLAM_IO:
         aws_access_key_id=None,
         aws_secret_access_key=None,
         region=os.environ.get("AWS_REGION", "us-west-2"),
+        cache=None,
+        cache_timeout=3600,
         **kwargs,
     ):
 
@@ -31,18 +33,31 @@ class GLAM_IO:
         # Open a connection to the AWS S3 bucket
         self.client = self.session.client("s3")
 
-        # Set up an expiring cache for data objects
-        self.cache = defaultdict(lambda: ExpiringDict(max_len=1000, max_age_seconds=3600))
-        # and for keys
-        self.key_cache = ExpiringDict(max_len=100, max_age_seconds=3600)
+        # If there is no redis cache available
+        self.cache_timeout = cache_timeout
+        if cache is None:
+            # Set up an expiring cache
+            self.cache = ExpiringDict(
+                max_len=100,
+                max_age_seconds=self.cache_timeout
+            )
+            self.using_redis = False
+        else:
+            # Otherwise attach the redis cache to this object
+            self.cache = cache
+            self.using_redis = True
 
-        # Set the index of genome IDs, keyed by dataset
-        self.genome_ix = dict()
+
+        # # Set the index of genome IDs, keyed by dataset
+        # self.genome_ix = dict()
 
     def read_item(self, base_path, suffix):
 
+        # Format a unique key for this item in the cache
+        cache_key = f"object-{base_path}-{suffix}"
+
         # Check the cache
-        cached_value = self.cache.get(base_path, {}).get(suffix)
+        cached_value = self.cache.get(cache_key)
         if cached_value is not None:
             return cached_value
         
@@ -67,7 +82,11 @@ class GLAM_IO:
             df = pd.read_csv(io.BytesIO(obj['Body'].read()), compression="gzip")
 
         # Store in the cache
-        self.cache[base_path][suffix] = df
+        logging.info(f"Saving to the cache - {cache_key}")
+        if self.using_redis:
+            self.cache.set(cache_key, df, timeout=self.cache_timeout)
+        else:
+            self.cache[cache_key] = df
 
         # Return the value
         return df
@@ -79,8 +98,11 @@ class GLAM_IO:
         if not base_path.endswith("/"):
             base_path = f"{base_path}/"
 
+        # Make a unique key for the cache
+        cache_key = f"keys-{base_path}"
+
         # Check the cache
-        cached_keys = self.key_cache.get(base_path)
+        cached_keys = self.cache.get(cache_key)
         if cached_keys is not None:
             return self.filter_keys_by_prefix(cached_keys, prefix=prefix)
 
@@ -115,7 +137,11 @@ class GLAM_IO:
                 keys.append(i["Key"].replace(prefix, ""))
 
         # Store in the cache
-        self.key_cache[base_path] = keys
+        logging.info(f"Saving to the cache - {cache_key}")
+        if self.using_redis:
+            self.cache.set(cache_key, keys, timeout=self.cache_timeout)
+        else:
+            self.cache[cache_key] = keys
 
         return self.filter_keys_by_prefix(keys, prefix=prefix)
 
@@ -280,18 +306,32 @@ class GLAM_IO:
     def get_genome_cag_containment(self, base_path, genome_id):
         # Genome containment is sharded by GENOME_ID % 1000
 
+        # Format the key which is used to store the list of genomes for each dataset
+        cache_key = f"genomes-{base_path}"
+
         # Check to see if we have the genome index for this dataset
-        if self.genome_ix.get(base_path) is None:
+        genome_index_list = self.cache.get(cache_key)
+        if genome_index_list is None:
             logging.info(f"Fetching genome index for {base_path}")
-            self.genome_ix[base_path] = pd.Series(
+            genome_index_list = pd.Series(
                 range(self.get_genome_manifest(base_path).shape[0]),
                 index=self.get_genome_manifest(base_path)["id"].values,
             ).apply(
                 lambda ix: ix % 1000
             )
 
+            logging.info(f"Saving to the cache - {cache_key}")
+            if self.using_redis:
+                self.cache.set(
+                    cache_key,
+                    genome_index_list,
+                    timeout=self.cache_timeout
+                )
+            else:
+                self.cache[cache_key] = genome_index_list
+
         # Get the index for this particular genome
-        genome_ix = self.genome_ix[base_path].loc[genome_id]
+        genome_ix = genome_index_list.loc[genome_id]
 
         # Read the containment for this genome
         df = self.read_item(
@@ -303,9 +343,15 @@ class GLAM_IO:
         if df is None:
             return None
 
-        return df.query(
+        df = df.query(
             f"genome == '{genome_id}'"
         ).drop(columns="genome")
+        
+        # If this genome has no containment, return None
+        if df.shape[0] == 0:
+            return None
+        else:
+            return df
 
     def get_top_genome_containment(self, base_path):
         # The top genome containment for all CAGs is stored in a single table

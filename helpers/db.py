@@ -17,6 +17,8 @@ class GLAM_DB:
         db_password=None,
         db_host=None,
         db_port=None,
+        cache=None,
+        cache_timeout=3600,
         **kwargs,
     ):
 
@@ -31,6 +33,7 @@ class GLAM_DB:
         self.db_password = db_password
         self.db_host = db_host
         self.db_port = db_port
+        self.cache_timeout = cache_timeout
 
         # Set up a sqlalchemy engine
         self.sqlalchemy_engine = self.connect_sqlalchemy()
@@ -38,8 +41,18 @@ class GLAM_DB:
         # Set up a mysql engine
         self.mysql_engine = self.connect_mysql()
 
-        # Set up an expiring cache
-        self.cache = ExpiringDict(max_len=100, max_age_seconds=10)
+        # If there is no redis cache available
+        if cache is None:
+            # Set up an expiring cache 
+            self.cache = ExpiringDict(
+                max_len=100, 
+                max_age_seconds=self.cache_timeout
+            )
+            self.using_redis = False
+        else:
+            # Otherwise attach the redis cache to this object
+            self.cache = cache
+            self.using_redis = True
 
     def __del__(self):
         self.close()
@@ -108,8 +121,12 @@ class GLAM_DB:
         self.mysql_engine.commit()
 
     def read_table(self, table_name, check_cache=True):
-        if check_cache and self.cache.get(table_name) is not None:
-            return self.cache.get(table_name)
+
+        # Make a unique key for this table in the database
+        cache_key = f"database-{table_name}"
+
+        if check_cache and self.cache.get(cache_key) is not None:
+            return self.cache.get(cache_key)
 
         logging.info("Reading table '{}'".format(table_name))
         # Connect to the database and open a cursor
@@ -118,7 +135,14 @@ class GLAM_DB:
             df = pd.read_sql("SELECT * FROM {};".format(table_name), conn)
 
         # Add to the cache
-        self.cache[table_name] = df
+        if self.using_redis:
+            self.cache.set(
+                cache_key, 
+                df,
+                timeout=self.cache_timeout,
+            )
+        else:
+            self.cache[cache_key] = df
 
         return df
 

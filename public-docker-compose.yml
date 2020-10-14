@@ -3,7 +3,7 @@ services:
   glam:
     ports:
       - "8050:8050"
-    image: quay.io/fhcrc-microbiome/glam-browser-v2:latest
+    image: quay.io/fhcrc-microbiome/glam-browser-v2:redis-cache
 
     environment:
       - DB_NAME
@@ -16,3 +16,10 @@ services:
       - AWS_ACCESS_KEY_ID
       - AWS_SECRET_ACCESS_KEY
       - AWS_REGION
+      - REDIS_URL=redis://redis:6379
+
+  redis:
+    image: redis:latest
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
