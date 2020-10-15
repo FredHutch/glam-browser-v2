@@ -361,19 +361,24 @@ class GLAM_LAYOUT:
             color="primary",
             dark=True,
             children=[
-                dbc.Button(
-                    'Log In',
-                    style={"margin": "10px"},
-                    id={"type": "login-button", "parent": "navbar"}
-                ),
-                dcc.Link(
-                    dbc.Button(
-                        'Log Out',
-                        style={"margin": "10px"}
-                    ),
-                    href="/",
-                    refresh=True,
+                dbc.DropdownMenu(
+                    label="User",
+                    children=[
+                        dbc.DropdownMenuItem(
+                            'Log In',
+                            id={"type": "login-button", "parent": "navbar"},                            
+                        ),
+                        dbc.DropdownMenuItem(
+                            'Log Out',
+                            href="/",
+                            external_link=True,
+                        )
+                    ],
+                    right=True,
+                    in_navbar=True,
+                    caret=True,
                 )
+
             ],
             id="navbar"
         )]
