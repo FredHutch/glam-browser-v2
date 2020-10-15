@@ -175,7 +175,6 @@ class GLAM_CALLBACKS:
         )  # pylint: disable=unused-variable
         def change_password_response(apply_button, username, old_password, new_password):
             # If the apply password button has never been pressed, don't update
-            print(apply_button)
             if apply_button is None or apply_button == 0:
                 return ""
 

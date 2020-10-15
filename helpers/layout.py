@@ -45,7 +45,7 @@ class GLAM_LAYOUT:
                 self.change_password_modal(),
 
                 # Page content will be filled in using this element
-                html.Div(id='page-content'),
+                dbc.Spinner(id='page-content'),
 
                 # Div with the manifest table used to mask specimens
                 self.manifest_div(),
