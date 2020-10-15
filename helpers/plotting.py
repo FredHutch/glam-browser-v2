@@ -59,6 +59,17 @@ class GLAM_PLOTTING:
                 )
             ]
 
+    ##############
+    # EMPTY PLOT #
+    ##############
+    def empty_plot(self, title=""):
+        empty_fig = go.Figure(data=[])
+        empty_fig.update_layout(
+            title=title,
+            template="simple_white",
+        )
+        return empty_fig
+
     #################
     # RENDER A PLOT #
     #################
@@ -1800,6 +1811,34 @@ class GLAM_PLOTTING:
         )
 
         return fig
+
+    #########################
+    # GENOME ALIGNMENT PLOT #
+    #########################
+    def genome_alignment_plot(
+        self,
+        details_df,
+        center_ix,
+        annotation_df,
+        manifest_df,
+        genome_id,
+        plot_size,
+        cag_association_dict,
+        arrow_dy=0.05,
+        arrow_dx=0.25,
+    ):
+        return draw_genome_alignment_plot(
+            details_df,
+            center_ix,
+            annotation_df,
+            manifest_df,
+            genome_id,
+            plot_size,
+            cag_association_dict,
+            arrow_dy = arrow_dy,
+            arrow_dx = arrow_dx,
+        )   
+
 
 def calc_clr(v):
     """Calculate the CLR for a vector of abundances."""

@@ -423,6 +423,73 @@ class GLAM_IO:
             f"genome_summary/{parameter}.feather"
         )
 
+    def get_genome_details(self, base_path, genome_id):
+        return self.read_item(
+            base_path,
+            f"genome_details/{genome_id}.feather"
+        )
+
+    def get_genomes_with_details(self, base_path):
+        # There's enough computing in this call to merit caching
+        cache_key = f"genomes-with-details-{base_path}"
+
+        # Check the cache
+        cached_value = self.cache.get(cache_key)
+        if cached_value is not None:
+            return cached_value
+
+        # Get the list of genomes which have details available
+        genome_id_list = [
+            fp.replace(".feather", "")
+            for fp in self.read_keys(
+                base_path,
+                prefix="genome_details/"
+            )
+            if fp.endswith(".feather")
+        ]
+
+        # Get the number of genes in the top hit for each CAG
+        top_hits_df = self.get_top_genome_containment(base_path).reset_index()
+        
+        # Make sure that we're only considering genomes which are in both lists
+        genome_id_list = list(set(genome_id_list) & set(top_hits_df["genome"].tolist()))
+
+        # Filter down to the top hit per genome
+        top_hits_df = top_hits_df.sort_values(
+            by="n_genes",
+            ascending=False
+        ).groupby(
+            "genome"
+        ).head(
+            1
+        )
+
+        # Get the list sorted by top hit
+        genome_id_list = top_hits_df.set_index(
+            "genome"
+        ).reindex(
+            index=genome_id_list
+        ).sort_values(
+            by="n_genes",
+            ascending=False
+        ).index.values
+
+        # Store in the cache
+        logging.info(f"Saving to the cache - {cache_key}")
+        if self.using_redis:
+            self.cache.set(cache_key, genome_id_list, timeout=self.cache_timeout)
+        else:
+            self.cache[cache_key] = genome_id_list
+
+        return genome_id_list
+
+
+    def get_genome_annotations(self, base_path, genome_id):
+        return self.read_item(
+            base_path,
+            f"genome_annotations/{genome_id}.feather"
+        )
+
     def has_functional_annotations(
         self, 
         base_path, 

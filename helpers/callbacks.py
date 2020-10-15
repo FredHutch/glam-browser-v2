@@ -1072,6 +1072,101 @@ class GLAM_CALLBACKS:
             else:
                 return f"{pathname}{search_string}"
 
+        #########################
+        # GENOME ALIGNMENT PLOT #
+        #########################
+        @app.callback(
+            Output("genome-alignment-plot", "figure"),
+            [
+                Input("genome-details-table", "selected_rows"),
+            ],
+            [
+                State("url", "pathname"),
+                State("url", "search"),
+                State("username", "value"),
+                State("password", "value"),
+            ]
+        )
+        def update_genome_alignment_plot(
+            selected_rows, 
+            pathname, 
+            search_string, 
+            username, 
+            password
+        ):
+            """Format the genome alignment plot."""
+            
+            # This particular plot is given its own callback because
+            # the plot needs to read from the 'selected_rows' in the
+            # genome-details-table, which is not currently wired into
+            # the search string href system
+            # TODO: Update the genome-details-table to hyperlink the 
+            # selected row and populate the search string
+
+            if pathname is None or "/d/" not in pathname:
+                return self.glam_plotting.empty_plot(
+                    title="No dataset selected"
+                )
+
+            # Parse the dataset name from the path
+            dataset_id = pathname.split("/")[2]
+
+            # Check to see if this user has permission to view this dataset
+            if not self.glam_db.user_can_access_dataset(dataset_id, username, password):
+                return self.glam_plotting.empty_plot(
+                    title="Permission denied"
+                )
+
+            # If no rows are selected, tell the user to select some
+            if selected_rows is None or len(selected_rows) == 0:
+                return self.glam_plotting.empty_plot(
+                    title="Please select a gene from the table above"
+                )
+
+            # Get the base path to the dataset
+            dataset_uri = self.glam_db.get_dataset_uri(dataset_id)
+
+            # Get the arguments in the search string
+            args = decode_search_string(search_string)
+
+            # Get the selected genome
+            genome_id = args["genome_id"]
+
+            # Get the genome manifest
+            manifest_df = self.glam_io.get_genome_manifest(dataset_uri)
+
+            # Get the table with the details of all alignments in this genome
+            details_df = self.glam_io.get_genome_details(dataset_uri, genome_id)
+
+            # Get the annotations for this genome, if any
+            annotation_df = self.glam_io.get_genome_annotations(
+                dataset_uri, genome_id)
+
+            # Get the CAG associations with the selected parameters
+            cag_association_dict = {}
+            if args.get("parameter") is not None:
+                if len(args["parameter"]) > 0:
+                    for parameter in args["parameter"].split(","):
+                        if len(parameter) > 0:
+                            cag_association_dict[
+                                parameter
+                            ] = self.glam_io.get_cag_associations(
+                                dataset_uri,
+                                parameter
+                            )
+
+            # Render the plot
+            return self.glam_plotting.genome_alignment_plot(
+                details_df,
+                selected_rows[0],
+                annotation_df,
+                manifest_df,
+                genome_id,
+                int(args["window_size"]),
+                cag_association_dict,
+            )
+
+
 
 def location_matches(full_href, pathname, args):
     """Check if a location matches a given pathname and search string arguments."""

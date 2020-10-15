@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from collections import OrderedDict
 import dash_html_components as html
 import dash_bootstrap_components as dbc
 import dash_core_components as dcc
@@ -665,7 +666,8 @@ class GLAM_LAYOUT:
                                                     self.glam_db.get_dataset_uri(dataset_id)
                                                 )
                                                 for k, v in analysis.dynamic_defaults.items()
-                                            }
+                                            },
+                                            **analysis.defaults
                                         })
                                     )
                                 ),
@@ -696,6 +698,7 @@ class GLAM_LAYOUT:
             TaxonomySunburstCard(),
             GenomeContainmentHeatmap() if self.glam_io.has_genomes(dataset_uri) and self.glam_io.has_genome_parameters(dataset_uri) else None,
             GenomeAssociationCard() if self.glam_io.has_genomes(dataset_uri) and self.glam_io.has_genome_parameters(dataset_uri) else None,
+            GenomeAlignmentsCard() if self.glam_io.has_genomes(dataset_uri) else None,
         ]
 
     # Key the analysis by `short_name`
@@ -2419,6 +2422,180 @@ to that set of selected genomes.
         )
 
 
+###########################
+# GENOME ALIGNMENTS CARD #
+###########################
+class GenomeAlignmentsCard(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Genome Alignments"
+        self.description = "Map of gene alignments to a single genome"
+        self.short_name = "genome_alignments"
+        self.plot_list = []
+        self.defaults = dict(
+            parameter="",
+            window_size="50000"
+        )
+        self.dynamic_defaults = dict(
+            # By default, show the genome with the most genes aligning to a single CAG
+            genome_id=lambda glam_io, dataset_uri: glam_io.get_genomes_with_details(dataset_uri)[0]
+        )
+
+        self.help_text = """
+Detailed gene-level alignments are shown here for individual genomes,
+including details on the estimated association of genes with any parameter
+of interest. 
+
+After selecting a genome from the drop-down menu, the detailed list of
+alignments for that genome will be shown in the table. Clicking on any
+row in that table will then center the display on that gene. The amount
+of the genome shown in the display can be adjusted with the radio button
+below the plot, but individual gene alignments will not be shown above
+a certain window size (due to overplotting).
+
+When a parameter is selected the estimated coefficients of association
+for each CAG are shown in the table and a rolling window median Wald
+statistic is added in the plot.
+        """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Get the list of genomes available for plotting
+        genome_id_list = glam_io.get_genomes_with_details(dataset_uri)
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Get the details of all aligned genes for the selected genome
+        genome_aln_df = glam_io.get_genome_details(
+            dataset_uri,
+            self.args["genome_id"]
+        )
+
+        # Get the name for each genome from the manifest
+        genome_manifest = glam_io.get_genome_manifest(dataset_uri).set_index("id")
+        # Sort the genome options alphabetically by name
+        genome_options = OrderedDict()
+        for genome_id, genome_name in genome_manifest.reindex(
+            index=genome_id_list
+        ).sort_values(
+            by="name"
+        )["name"].iteritems():
+            genome_options[genome_id] = genome_name
+
+        # Get the options for the parameters which can be displayed
+        parameter_options = OrderedDict()
+        if glam_io.has_genome_parameters(dataset_uri):
+            for p in glam_io.get_genome_parameters(dataset_uri):
+                parameter_options[p] = p
+        else:
+            parameter_options["none"] = "None"
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    dbc.Col([], width=3),
+                    dbc.Col(
+                        self.dropdown_menu(
+                            label="Genome",
+                            options=genome_options,
+                            key="genome_id"
+                        ),
+                        width=6,
+                        align="center"
+                    ),
+                    dbc.Col([], width=3)
+                ]),
+                dbc.Row([
+                    dbc.Col([], width=1),
+                    dbc.Col(
+                        html.Div(
+                            dash_table.DataTable(
+                                id='genome-details-table',
+                                columns=[
+                                    {"name": "Gene Name", "id": "gene"},
+                                    {"name": "CAG", "id": "CAG"},
+                                    {"name": "Contig", "id": "contig"},
+                                    {"name": "Percent Identity", "id": "pident"},
+                                    {"name": "Start Position", "id": "contig_start"},
+                                    {"name": "End Position", "id": "contig_end"},
+                                ],
+                                data=genome_aln_df.to_dict(orient="records"),
+                                row_selectable='single',
+                                style_table={
+                                    'minWidth': '100%',
+                                },
+                                style_header={
+                                    "backgroundColor": "rgb(2,21,70)",
+                                    "color": "white",
+                                    "textAlign": "center",
+                                },
+                                page_action='native',
+                                page_size=20,
+                                filter_action='native',
+                                sort_action='native',
+                                hidden_columns=[],
+                                css=[{"selector": ".show-hide",
+                                        "rule": "display: none"}],
+                            ),
+                            style={"marginTop": "20px"}
+                        ),
+                        width=10,
+                        align="center"
+                    ),
+                    dbc.Col([], width=1)
+                ]),
+                dbc.Row([
+                    dbc.Col(
+                        dbc.Spinner(
+                            dcc.Graph(
+                                id="genome-alignment-plot"
+                            )
+                        ),
+                        width=12,
+                        align="center"
+                    )
+                ]),
+                dbc.Row([
+                    dbc.Col([], width=2),
+                    dbc.Col(
+                        self.multiselector(
+                            label="Show CAG Association By:",
+                            options=parameter_options,
+                            key="parameter"
+                        ),
+                        width=4,
+                        align="center"
+                    ),
+                    dbc.Col(
+                        self.dropdown_menu(
+                            label="Window Size",
+                            options=OrderedDict([
+                                ("10000", '10kb'),
+                                ("25000", '25kb'),
+                                ("50000", '50kb'),
+                                ("150000", '150kb'),
+                                ("500000", '500kb'),
+                                ("-1", 'All'),
+                            ]),
+                            key="window_size"
+                        ),
+                        width=4,
+                        align="center"
+                    ),
+                    dbc.Col([], width=2),
+                ])
+            ],
+        )
+
+
 #################
 # CARD TEMPLATE #
 #################
@@ -2455,148 +2632,5 @@ class CardTemplate(AnalysisCard):
             dataset_id,
             [],
         )
-
-
-# ###########################
-# # GENOME ALIGNMENTS CARD #
-# ###########################
-# def genome_alignments_card():
-#     return card_wrapper(
-#         "Genome Alignment Details",
-#         [
-#             dbc.Row([
-#                 dbc.Col([], width=3),
-#                 dbc.Col(
-#                     dcc.Dropdown(
-#                         id="genome-details-dropdown",
-#                         options=[],
-#                         value=None,
-#                     ),
-#                     width=6,
-#                     align="center"
-#                 ),
-#                 dbc.Col([], width=3)
-#             ]),
-#             dbc.Row([
-#                 dbc.Col([], width=1),
-#                 dbc.Col(
-#                     html.Div(
-#                         dash_table.DataTable(
-#                             id='genome-details-table',
-#                             columns=[
-#                                 {"name": "Gene Name", "id": "gene"},
-#                                 {"name": "CAG", "id": "CAG"},
-#                                 {"name": "Contig", "id": "contig"},
-#                                 {"name": "Percent Identity", "id": "pident"},
-#                                 {"name": "Start Position", "id": "contig_start"},
-#                                 {"name": "End Position", "id": "contig_end"},
-#                             ],
-#                             data=[
-#                                 {
-#                                     "gene": None, 
-#                                     "CAG": None,
-#                                     "contig": None,
-#                                     "pident": None,
-#                                     "contig_start": None,
-#                                     "contig_end": None,
-#                                 }
-#                             ],
-#                             row_selectable='single',
-#                             style_table={
-#                                 'minWidth': '100%',
-#                             },
-#                             style_header={
-#                                 "backgroundColor": "rgb(2,21,70)",
-#                                 "color": "white",
-#                                 "textAlign": "center",
-#                             },
-#                             page_action='native',
-#                             page_size=20,
-#                             filter_action='native',
-#                             sort_action='native',
-#                             hidden_columns=[],
-#                             css=[{"selector": ".show-hide",
-#                                     "rule": "display: none"}],
-#                         ),
-#                         style={"marginTop": "20px"}
-#                     ),
-#                     width=10,
-#                     align="center"
-#                 ),
-#                 dbc.Col([], width=1)
-#             ]),
-#             dbc.Row([
-#                 dbc.Col(
-#                     dbc.Spinner(
-#                         dcc.Graph(
-#                             id="genome-alignment-plot"
-#                         )
-#                     ),
-#                     width=12,
-#                     align="center"
-#                 )
-#             ]),
-#             dbc.Row([
-#                 dbc.Col([], width=4),
-#                 dbc.Col(
-#                     [
-#                         html.Label("Show CAG Association By:"),
-#                         html.Br(),
-#                         dcc.Dropdown(
-#                             id='genome-alignment-parameters',
-#                             options=[],
-#                             value=[],
-#                             multi=True,
-#                         )
-#                     ],
-#                     width=4,
-#                     align="center"
-#                 ),
-#                 dbc.Col(
-#                     [
-#                         html.Label("Window Size"),
-#                         html.Br(),
-#                         dcc.Dropdown(
-#                             id='genome-alignment-plot-width',
-#                             options=[
-#                                 {'label': '10kb', 'value': 10000},
-#                                 {'label': '25kb', 'value': 25000},
-#                                 {'label': '50kb', 'value': 50000},
-#                                 {'label': '150kb', 'value': 150000},
-#                                 # {'label': 'All', 'value': -1},
-#                             ],
-#                             value=25000,
-#                         )
-#                     ],
-#                     width=4,
-#                     align="center"
-#                 ),
-#             ])
-#         ],
-#         custom_id="genome-alignments-card",
-#         help_text="""
-# Detailed gene-level alignments are shown here for individual genomes,
-# including details on the estimated association of genes with any parameter
-# of interest. 
-
-# After selecting a genome from the drop-down menu, the detailed list of
-# alignments for that genome will be shown in the table. Clicking on any
-# row in that table will then center the display on that gene. The amount
-# of the genome shown in the display can be adjusted with the radio button
-# below the plot, but individual gene alignments will not be shown above
-# a certain window size (due to overplotting).
-
-# When a parameter is selected the estimated coefficients of association
-# for each CAG are shown in the table and a rolling window median Wald
-# statistic is added in the plot.
-# """
-#     )
-# #############################
-# # \ GENOME ALIGNMENTS CARD #
-# #############################
-
-
-
-
 
 
