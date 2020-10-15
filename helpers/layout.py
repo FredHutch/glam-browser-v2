@@ -736,11 +736,7 @@ class GLAM_LAYOUT:
     # Return the page for a spcific analysis
     def analysis_page(self, username, password, dataset_id, analysis_name, search_string):
 
-        # Make sure the user is logged in
-        if self.glam_db.valid_username_password(username, password) is False:
-            return self.page_not_found()
-
-        # Make sure that the user is allowed to access this dataset
+        # Make sure that the user is allowed to access this dataset (and is logged in if required)
         if self.glam_db.user_can_access_dataset(dataset_id, username, password) is False:
             return self.page_not_found()
 

@@ -44,28 +44,32 @@ class GLAM_CALLBACKS:
                 username if self.glam_db.valid_username_password(username, password) else "Anonymous User"
             ), show_style
 
-        # Check to see if the user is NOT logged in
-        elif self.glam_db.valid_username_password(username, password) is False:
+        # The user is attempting to view all datasets
+        elif pathname == "/datasets" or pathname == "/" or pathname == "":
 
-            # Page for users who are not logged in
-            return self.glam_layout.logged_out_page(), show_style
+            # Check to see if the user is logged in
+            if self.glam_db.valid_username_password(username, password):
 
-        # User is logged in
-        else:
-
-            # Datasets available to this user
-            if pathname == "/datasets" or pathname == "/":
-
+                # Show the datasets for this user
                 return self.glam_layout.dataset_list(
                     self.glam_db.user_datasets(username, password),
                     username
                 ), show_style
 
-            # Open a specific analysis
-            elif pathname is not None and pathname.startswith("/d/") and "/a/" in pathname:
+            # User is NOT logged in
+            else:
+                # Page for users who are not logged in
+                return self.glam_layout.logged_out_page(), show_style
 
-                # Parse the dataset name from the path
-                dataset_id = pathname.split("/")[2]
+        # Open a specific analysis
+        elif pathname is not None and pathname.startswith("/d/") and "/a/" in pathname:
+
+            # Parse the dataset name from the path
+            dataset_id = pathname.split("/")[2]
+
+            # Check to see if this dataset is accessible
+            # (either because it is public, or because this user has access)
+            if self.glam_db.user_can_access_dataset(dataset_id, username, password):
 
                 # Parse the analysis name
                 analysis_name = pathname.rsplit("/", 1)[1]
@@ -78,19 +82,19 @@ class GLAM_CALLBACKS:
                     search_string
                 ), show_style
 
-            # Access to specific dataset
-            elif pathname is not None and pathname.startswith("/d/") and pathname.endswith("/analysis"):
+        # Access to specific dataset
+        elif pathname is not None and pathname.startswith("/d/") and pathname.endswith("/analysis"):
 
-                # Parse the dataset name from the path
-                dataset_id = pathname.split("/")[2]
+            # Parse the dataset name from the path
+            dataset_id = pathname.split("/")[2]
 
-                # Check to see if this user has permission to view this dataset
-                if self.glam_db.user_can_access_dataset(
-                    dataset_id,
-                    username,
-                    password
-                ):
-                    return self.glam_layout.dataset_display(username, dataset_id, search_string), show_style
+            # Check to see if this user has permission to view this dataset
+            if self.glam_db.user_can_access_dataset(
+                dataset_id,
+                username,
+                password
+            ):
+                return self.glam_layout.dataset_display(username, dataset_id, search_string), show_style
 
         # catch-all else
         return self.glam_layout.page_not_found(), show_style

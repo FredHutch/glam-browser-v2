@@ -216,6 +216,11 @@ class GLAM_DB:
 
     def user_can_access_dataset(self, dataset, username, password):
         """Return True/False indicating whether this user can access this password."""
+
+        # Check if this dataset is publicly accessible
+        if dataset in self.public_datasets():
+            return True
+
         if self.valid_username_password(username, password) is False:
             return False
 
