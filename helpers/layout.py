@@ -643,11 +643,12 @@ class GLAM_LAYOUT:
                         dbc.CardHeader(dbc.Row([
                             dbc.Col(
                                 html.Div(
-                                    html.P(
-                                        analysis.long_name
+                                    dcc.Markdown(
+                                        f"**{analysis.long_name}**:\t{analysis.description}"
                                     ), 
                                     style={"marginTop": "10px"}
-                                )
+                                ),
+                                width=10,
                             ),
                             dbc.Col(
                                 dcc.Link(
@@ -668,7 +669,8 @@ class GLAM_LAYOUT:
                                         })
                                     )
                                 ),
-                                style={"textAlign": "right", "marginTop": "5px"}
+                                style={"textAlign": "right", "marginTop": "5px"},
+                                width=2,
                             )
                         ]))
                     ],
@@ -826,6 +828,7 @@ class AnalysisCard:
         # Placeholders which will be replaced in the __init__
         # method used by each of the AnalysisCards below
         self.long_name = "Generic Card"
+        self.description = "Description of the card"
         self.short_name = "generic_card"
         self.args = {}
 
@@ -1159,7 +1162,8 @@ class RichnessCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Number of Genes Detected Per Specimen"
+        self.long_name = "Richness"
+        self.description = "Number of genes detected in each specimen"
         self.short_name = "specimen_summary"
         self.plot_list = []
         self.defaults = dict(
@@ -1259,7 +1263,8 @@ class ExperimentSummaryCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Overall Summary of Gene-Level Analysis"
+        self.long_name = "Experiment Overview"
+        self.description = "Summary metrics for entire analysis"
         self.short_name = "experiment_summary"
         self.plot_list = []
         self.defaults = dict()
@@ -1305,7 +1310,8 @@ class SingleSampleCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "CAGs Detected in a Single Sample"
+        self.long_name = "Single Sample"
+        self.description = "Abundance of CAGs in a single sample"
         self.short_name = "single_sample"
         self.plot_list = []
         self.defaults = dict(
@@ -1396,7 +1402,8 @@ class OrdinationCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Comparison of Specimens by Overall Composition (e.g. PCA)"
+        self.long_name = "Community Ordination"
+        self.description = "Comparison of specimens by overall composition (e.g. PCA)"
         self.short_name = "ordination"
         self.plot_list = []
         self.defaults = dict(
@@ -1528,7 +1535,8 @@ class CAGSummaryCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "CAG Descriptive Statistics (e.g. size)"
+        self.long_name = "CAG Characteristics"
+        self.description = "Summary metrics describing all CAGs (e.g. size)"
         self.short_name = "cag_summary"
         self.plot_list = []
         self.defaults = dict(
@@ -1629,7 +1637,8 @@ class CagAbundanceHeatmap(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Abundance of Multiple CAGs (heatmap)"
+        self.long_name = "CAG Abundance Heatmap"
+        self.description = "Relative abundance of multiple CAGs across all specimens"
         self.short_name = "cag_abund_heatmap"
         self.plot_list = []
         self.defaults = dict(
@@ -1795,7 +1804,8 @@ class AnnotationHeatmapCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Annotations of Multiple CAGs (heatmap)"
+        self.long_name = "CAG Annotation Heatmap"
+        self.description = "Annotations of genes across multiple CAGs (e.g. taxonomy)"
         self.short_name = "cag_annot_heatmap"
         self.plot_list = []
         self.defaults = dict(
@@ -1939,7 +1949,8 @@ class VolcanoCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Association of CAGs with Experiment Parameters (volcano plot)"
+        self.long_name = "Volcano Plot"
+        self.description = "Association of CAGs with experimental parameters"
         self.short_name = "volcano"
         self.plot_list = []
         self.defaults = dict(
@@ -2058,7 +2069,8 @@ class PlotCagCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Plot Individual CAG Abundance"
+        self.long_name = "Single CAG Plot"
+        self.description = "Abundance of a single CAG across all specimens"
         self.short_name = "plot_cag"
         self.plot_list = []
         self.defaults = dict(
@@ -2166,7 +2178,8 @@ class GenomeAssociationCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Summary of Genome Association with Parameters"
+        self.long_name = "Genome Association Scatterplot"
+        self.description = "Summary of genome-level association with experimental parameters"
         self.short_name = "genome_association"
         self.plot_list = []
         self.defaults = dict(
@@ -2255,7 +2268,8 @@ class TaxonomySunburstCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Taxonomic Assignment of Genes in a Single CAG"
+        self.long_name = "Single CAG Taxonomy"
+        self.description = "Taxonomic assignment of genes within a single CAG"
         self.short_name = "taxonomy_sunburst"
         self.plot_list = []
         self.defaults = dict()
@@ -2316,7 +2330,8 @@ class GenomeContainmentHeatmap(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Genome Containment Heatmap: Show Genomes Containing Genes from a Single CAG"
+        self.long_name = "Genome Containment Heatmap"
+        self.description = "Genomes containing genes from a single CAG"
         self.short_name = "genome_containment_heatmap"
         self.plot_list = []
         self.defaults = dict(
@@ -2412,6 +2427,7 @@ class CardTemplate(AnalysisCard):
     def __init__(self):
 
         self.long_name = ""
+        self.description = ""
         self.short_name = ""
         self.plot_list = []
         self.defaults = dict(
