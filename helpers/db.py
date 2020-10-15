@@ -165,6 +165,39 @@ class GLAM_DB:
         """Return the list of datasets which are marked 'public'."""
         return self.read_table("dataset_public")["dataset_id"].tolist()
 
+    def add_public_dataset(self, dataset_id=None):
+        """Add a dataset to the list which is marked 'public'."""
+        assert dataset_id is not None, "Please specify dataset"
+        public_datasets = self.read_table("dataset_public")["dataset_id"].tolist()
+        if dataset_id in public_datasets:
+            logging.info(f"Dataset is already public, stopping ({dataset_id})")
+        
+        # Make sure this is a valid dataset
+        all_datasets = self.read_table("dataset")["id"].tolist()
+        assert dataset_id in all_datasets, f"Dataset ID is not valid ({dataset_id})"
+
+        # Add it to the list
+        self.write_table(
+            "dataset_public", 
+            pd.DataFrame([{"dataset_id": dataset_id}]),
+            if_exists="append"
+        )
+        logging.info(f"Made dataset public: {dataset_id}")
+
+    def list_datasets(self):
+        """List all datasets in a human-readable format."""
+
+        df = self.read_table("dataset")
+
+        print("\nDATASETS\n\n")
+        
+        for _, r in df.iterrows():
+            print("\n".join([
+                f"{k}:\t{v}"
+                for k, v in r.items()
+            ]))
+            print("\n------\n")
+
     def user_datasets(self, username, password):
         """Return the list of datasets which this user is allowed to access."""
         if self.valid_username_password(username, password) is False:

@@ -76,8 +76,8 @@ def main():
     subparsers = parser.add_subparsers(help='Select a command')
 
     # SET UP THE DATABASE
-    parser_add_user = subparsers.add_parser("setup", help="Set up a database")
-    parser_add_user.set_defaults(
+    parser_setup = subparsers.add_parser("setup", help="Set up a database")
+    parser_setup.set_defaults(
         func=lambda args: open_glam_db(args).setup()
     )
 
@@ -115,10 +115,23 @@ def main():
         func=lambda args: open_glam_db(args).add_dataset(dataset_id=args.dataset_id, name=args.name, uri=args.uri)
     )
 
+    # LIST ALL DATASETS
+    parser_list_datasets = subparsers.add_parser("list-datasets", help="List all datasets")
+    parser_list_datasets.set_defaults(
+        func=lambda args: open_glam_db(args).list_datasets()
+    )
+
+    # ADD A PUBLIC DATASET
+    parser_add_public_dataset = subparsers.add_parser("add-public-dataset", help="Make a dataset publicly accessible")
+    parser_add_public_dataset.add_argument("--dataset-id", type=str, help="Unique ID for dataset")
+    parser_add_public_dataset.set_defaults(
+        func=lambda args: open_glam_db(args).add_public_dataset(dataset_id=args.dataset_id)
+    )
+
     # REMOVE A DATASET
-    parser_add_dataset = subparsers.add_parser("remove-dataset", help="Remove a dataset")
-    parser_add_dataset.add_argument("--dataset-id", type=str, help="Unique ID for dataset")
-    parser_add_dataset.set_defaults(
+    parser_remove_dataset = subparsers.add_parser("remove-dataset", help="Remove a dataset")
+    parser_remove_dataset.add_argument("--dataset-id", type=str, help="Unique ID for dataset")
+    parser_remove_dataset.set_defaults(
         func=lambda args: open_glam_db(args).remove_dataset(dataset_id=args.dataset_id)
     )
 
@@ -131,17 +144,17 @@ def main():
     )
 
     # REVOKE ACCESS TO A DATASET
-    parser_grant_access = subparsers.add_parser("revoke-access", help="Revoke permission for a user to access a dataset")
-    parser_grant_access.add_argument("--user-name", type=str, help="Name of user")
-    parser_grant_access.add_argument("--dataset-name", type=str, help="Name of dataset")
-    parser_grant_access.set_defaults(
+    parser_revoke_access = subparsers.add_parser("revoke-access", help="Revoke permission for a user to access a dataset")
+    parser_revoke_access.add_argument("--user-name", type=str, help="Name of user")
+    parser_revoke_access.add_argument("--dataset-name", type=str, help="Name of dataset")
+    parser_revoke_access.set_defaults(
         func=lambda args: open_glam_db(args).revoke_access(user=args.user_name, dataset=args.dataset_name)
     )
 
     # DUMP TABLE CONTENTS
-    parser_grant_access = subparsers.add_parser("dump-table", help="Print the contents of any table")
-    parser_grant_access.add_argument("--table", type=str, help="Name of the table to read")
-    parser_grant_access.set_defaults(
+    parser_dump_table = subparsers.add_parser("dump-table", help="Print the contents of any table")
+    parser_dump_table.add_argument("--table", type=str, help="Name of the table to read")
+    parser_dump_table.set_defaults(
         func=lambda args: print(open_glam_db(args).read_table(args.table))
     )
 
