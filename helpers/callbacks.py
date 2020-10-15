@@ -1079,7 +1079,7 @@ class GLAM_CALLBACKS:
                 return f"{pathname}{search_string}"
 
             else:
-                return f"{pathname}{search_string}"
+                raise PreventUpdate
 
         #########################
         # GENOME ALIGNMENT PLOT #
