@@ -142,6 +142,59 @@ class GLAM_CALLBACKS:
             else:
                 return False
 
+        # Open and close the change-password modal
+        @app.callback(
+            Output("change-password-modal", "is_open"),
+            [
+                Input("change-password-button", "n_clicks"),
+                Input("change-password-close-button", "n_clicks")
+            ]
+        )  # pylint: disable=unused-variable
+        def change_password_modal_is_open(open_button, close_button):
+            # If the change password button has never been pressed, keep the modal closed
+            if open_button is None:
+                return False
+
+            # Get the context which triggered the callback
+            ctx = dash.callback_context
+
+            # Open the modal if the open button was pressed
+            return ctx.triggered[0]["prop_id"] == "change-password-button.n_clicks"
+
+        # Try to change the user's password
+        @app.callback(
+            Output("change-password-response-text", "children"),
+            [
+                Input("change-password-apply-button", "n_clicks")
+            ],
+            [
+                State("change-password-username", "value"),
+                State("change-password-old", "value"),
+                State("change-password-new", "value"),
+            ]
+        )  # pylint: disable=unused-variable
+        def change_password_response(apply_button, username, old_password, new_password):
+            # If the apply password button has never been pressed, don't update
+            print(apply_button)
+            if apply_button is None or apply_button == 0:
+                return ""
+
+            # If the username and password is incorrect, stop
+            if not self.glam_db.valid_username_password(username, old_password):
+                return "Incorrect username / password"
+
+            # Make sure that the password is of sufficient length
+            if new_password is None or len(new_password) < 8:
+                return "Please provide a new password with at least 8 characters"
+
+            # Otherwise, try to change the password
+            self.glam_db.set_password(
+                username=username,
+                password=new_password
+            )
+            return "Successfully changed password"
+
+
         # Fill in the page-contents while also controlling show/hide of the sub-navbar
         @app.callback(
             [

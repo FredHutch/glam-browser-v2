@@ -41,6 +41,9 @@ class GLAM_LAYOUT:
                 # Modal for login with username and password
                 self.login_modal(),
 
+                # Modal to change the user's password
+                self.change_password_modal(),
+
                 # Page content will be filled in using this element
                 html.Div(id='page-content'),
 
@@ -229,6 +232,86 @@ class GLAM_LAYOUT:
             backdrop="static",
         )
 
+    def change_password_modal(self):
+        return dbc.Modal(
+            [
+                dbc.ModalHeader(
+                    "Change Password"
+                ),
+                dbc.ModalBody(
+                    [
+                        dbc.FormGroup(
+                            [
+                                dbc.Label("Username"),
+                                dbc.Input(
+                                    type="text", 
+                                    id="change-password-username", 
+                                    placeholder="Enter username",
+                                    debounce=True,
+                                ),
+                                dbc.FormText(
+                                    "Please provide the username for your GLAM Browser account",
+                                    color="secondary",
+                                ),
+                            ]
+                        ),
+                        dbc.FormGroup(
+                            [
+                                dbc.Label("Current Password"),
+                                dbc.Input(
+                                    type="password", 
+                                    id="change-password-old", 
+                                    placeholder="Enter current password",
+                                    debounce=True,
+                                ),
+                                dbc.FormText(
+                                    "Please provide the current password for your GLAM Browser account",
+                                    color="secondary",
+                                ),
+                            ]
+                        ),
+                        dbc.FormGroup(
+                            [
+                                dbc.Label("New Password"),
+                                dbc.Input(
+                                    type="password", 
+                                    id="change-password-new", 
+                                    placeholder="Enter new password",
+                                    debounce=True,
+                                ),
+                                dbc.FormText(
+                                    "Please provide the new password for your GLAM Browser account",
+                                    color="secondary",
+                                ),
+                            ]
+                        ),
+                        html.Div(
+                            children=None,
+                            id="change-password-response-text"
+                        )
+                    ]
+                ),
+                dbc.ModalFooter(
+                    [
+                        dbc.Button(
+                            "Apply",
+                            id="change-password-apply-button",
+                            n_clicks=0,
+                        ),
+                        dbc.Button(
+                            "Close",
+                            id="change-password-close-button",
+                            n_clicks=0,
+                        ),
+                    ]
+                ),
+            ],
+            id="change-password-modal",
+            centered=True,
+            keyboard=False,
+            backdrop="static",
+        )
+
     def list_bookmarks_modal(self):
         return dbc.Modal(
             [
@@ -366,12 +449,16 @@ class GLAM_LAYOUT:
                     children=[
                         dbc.DropdownMenuItem(
                             'Log In',
-                            id={"type": "login-button", "parent": "navbar"},                            
+                            id={"type": "login-button", "parent": "navbar"}, 
                         ),
                         dbc.DropdownMenuItem(
                             'Log Out',
                             href="/",
                             external_link=True,
+                        ),
+                        dbc.DropdownMenuItem(
+                            'Change Password',
+                            id="change-password-button",
                         )
                     ],
                     right=True,
