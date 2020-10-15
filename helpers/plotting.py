@@ -3575,8 +3575,12 @@ def draw_volcano_graph(
     fig.update_layout(
         xaxis_title="Estimated Coefficient",
         yaxis_title=yaxis_title,
+        xaxis_zeroline=True,
+        xaxis_zerolinecolor="grey",
+        yaxis_zeroline=True,
+        yaxis_zerolinecolor="grey",
         title={
-            'text': "Estimated Associations",
+            'text': f"Association with {parameter}",
             'y': 0.9,
             'x': 0.5,
             'xanchor': 'center',
