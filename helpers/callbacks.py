@@ -16,7 +16,18 @@ class GLAM_CALLBACKS:
         self.glam_layout = glam_layout
         self.glam_plotting = glam_plotting
 
-    def page_contents_children(self, pathname, search_string, username, password):
+    def page_contents_children(
+        self, 
+        pathname, 
+        search_string, 
+        username, 
+        password,
+        login_modal_is_open
+    ):
+        # If the login modal is open, don't update
+        if login_modal_is_open:
+            raise PreventUpdate
+
         show_style = {"display": "block"}
 
         # Direct to the login page
@@ -142,10 +153,17 @@ class GLAM_CALLBACKS:
                 Input("url", "search"),
                 Input("username", "value"),
                 Input("password", "value"),
+                Input("login-modal", "is_open"),
             ],
         )  # pylint: disable=unused-variable
-        def g(url, search_string, username, password):
-            return self.page_contents_children(url, search_string, username, password)
+        def g(url, search_string, username, password, login_modal_is_open):
+            return self.page_contents_children(
+                url, 
+                search_string, 
+                username, 
+                password, 
+                login_modal_is_open
+            )
 
         # Update the 'brand' of the sub-navbar with the username, if valid
         @app.callback(
