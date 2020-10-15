@@ -238,15 +238,37 @@ class GLAM_PLOTTING:
     ):
 
         # Get the data to plot
-        cag_abund_df = glam_io.get_cag_abundances(dataset_uri)
         cag_annotations_df = glam_io.get_cag_annotations(dataset_uri)
         metadata_df = glam_io.get_manifest(dataset_uri)
-    
+
+        # If there is no default sample, use the first one in the list
+        specimen = args["sample"]
+        if specimen == "none":
+            specimen = metadata_df.index.values[0]
+
         # Option 1 - plot abundance in a single sample versus CAG size
         if args["compare_to"] == "cag_size":
             f =  self.plot_sample_vs_cag_size
+
+            # Read in the abundance of CAGs in this single sample
+            cag_abund_df = pd.DataFrame({
+                specimen: glam_io.get_specimen_abundance(
+                    dataset_uri,
+                    specimen
+                )
+            })
+        
         else:
             f = self.plot_samples_pairwise
+
+            # Read in the abundance of CAGs in these two samples
+            cag_abund_df = pd.DataFrame({
+                s: glam_io.get_specimen_abundance(
+                    dataset_uri,
+                    s
+                )
+                for s in [specimen, args["compare_to"]]
+            })
             
         return f(
             cag_abund_df,
@@ -822,9 +844,7 @@ class GLAM_PLOTTING:
         figure_width = 800,
         figure_height = 800,
     ):
-        # Get the data to plot
-        cag_abund_df = glam_io.get_cag_abundances(dataset_uri)
-        cag_abund_df.columns = cag_abund_df.columns.map(str)
+        # Get the manifest
         manifest_df = glam_io.get_manifest(dataset_uri)
         manifest_df.index = manifest_df.index.map(str)
 
@@ -867,6 +887,13 @@ class GLAM_PLOTTING:
 
         # Just take the top `ncags`
         cag_id_list = cag_id_list[:min(ncags, len(cag_id_list))]
+
+        # Read in the CAG abundances
+        cag_abund_df = pd.DataFrame({
+            cag_id: glam_io.get_cag_abundance(dataset_uri, cag_id)
+            for cag_id in cag_id_list
+        }).T
+        cag_abund_df.columns = cag_abund_df.columns.map(str)
 
         assert len(cag_id_list) > 0, "Did not find any CAGs to plot"
 
@@ -1495,14 +1522,13 @@ class GLAM_PLOTTING:
         # Filter out any masked samples
         manifest_df = self.filter_manifest(manifest_df, args)
 
-        # Read in the CAG abundances
-        cag_abund_df = glam_io.get_cag_abundances(dataset_uri)
+        # Read in the CAG abundance
+        cag_abund = glam_io.get_cag_abundance(dataset_uri, cag_id)
 
         # Add the abundance of this particular CAG to the manifest
         # We have to be careful at this step that the specimen label
         # is always parsed as a string
         manifest_df.index = manifest_df.index.map(str)
-        cag_abund = cag_abund_df.loc[cag_id]
         cag_abund.index = cag_abund.index.map(str)
 
         # Now add to the table
