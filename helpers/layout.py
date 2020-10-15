@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from collections import OrderedDict
 import dash_html_components as html
 import dash_bootstrap_components as dbc
 import dash_core_components as dcc
@@ -41,8 +42,11 @@ class GLAM_LAYOUT:
                 # Modal for login with username and password
                 self.login_modal(),
 
+                # Modal to change the user's password
+                self.change_password_modal(),
+
                 # Page content will be filled in using this element
-                html.Div(id='page-content'),
+                dbc.Spinner(id='page-content'),
 
                 # Div with the manifest table used to mask specimens
                 self.manifest_div(),
@@ -215,18 +219,95 @@ class GLAM_LAYOUT:
                 ),
                 dbc.ModalFooter(
                     [
-                        dcc.Link(
-                            dbc.Button(
-                                "Apply",
-                                id="login-modal-apply-button",
-                                n_clicks=0,
-                            ),
-                            href="/"
-                        )
+                        dbc.Button(
+                            "Apply",
+                            id="login-modal-apply-button",
+                            n_clicks=0,
+                        ),
                     ]
                 ),
             ],
             id="login-modal",
+            centered=True,
+            keyboard=False,
+            backdrop="static",
+        )
+
+    def change_password_modal(self):
+        return dbc.Modal(
+            [
+                dbc.ModalHeader(
+                    "Change Password"
+                ),
+                dbc.ModalBody(
+                    [
+                        dbc.FormGroup(
+                            [
+                                dbc.Label("Username"),
+                                dbc.Input(
+                                    type="text", 
+                                    id="change-password-username", 
+                                    placeholder="Enter username",
+                                    debounce=True,
+                                ),
+                                dbc.FormText(
+                                    "Please provide the username for your GLAM Browser account",
+                                    color="secondary",
+                                ),
+                            ]
+                        ),
+                        dbc.FormGroup(
+                            [
+                                dbc.Label("Current Password"),
+                                dbc.Input(
+                                    type="password", 
+                                    id="change-password-old", 
+                                    placeholder="Enter current password",
+                                    debounce=True,
+                                ),
+                                dbc.FormText(
+                                    "Please provide the current password for your GLAM Browser account",
+                                    color="secondary",
+                                ),
+                            ]
+                        ),
+                        dbc.FormGroup(
+                            [
+                                dbc.Label("New Password"),
+                                dbc.Input(
+                                    type="password", 
+                                    id="change-password-new", 
+                                    placeholder="Enter new password",
+                                    debounce=True,
+                                ),
+                                dbc.FormText(
+                                    "Please provide the new password for your GLAM Browser account",
+                                    color="secondary",
+                                ),
+                            ]
+                        ),
+                        html.Div(
+                            children=None,
+                            id="change-password-response-text"
+                        )
+                    ]
+                ),
+                dbc.ModalFooter(
+                    [
+                        dbc.Button(
+                            "Apply",
+                            id="change-password-apply-button",
+                            n_clicks=0,
+                        ),
+                        dbc.Button(
+                            "Close",
+                            id="change-password-close-button",
+                            n_clicks=0,
+                        ),
+                    ]
+                ),
+            ],
+            id="change-password-modal",
             centered=True,
             keyboard=False,
             backdrop="static",
@@ -347,7 +428,7 @@ class GLAM_LAYOUT:
         return self.jumbotron_page([
             dcc.Markdown("### Welcome to the GLAM Browser\n\nTo get started, log in to your account or browse some publicly available datasets."),
             html.Br(),
-            dcc.Link(dbc.Button("Log In", style={"margin": "10px"}), href="/login"),
+            dbc.Button("Log In", style={"margin": "10px"}, id={"type": "login-button", "parent": "logged-out-page"}),
             dcc.Link(dbc.Button("Public Datasets", style={"margin": "10px"}), href="/public"),
         ])
 
@@ -364,21 +445,28 @@ class GLAM_LAYOUT:
             color="primary",
             dark=True,
             children=[
-                dcc.Link(
-                    dbc.Button(
-                        'Log In',
-                        style={"margin": "10px"}
-                    ),
-                    href="/login"
-                ),
-                dcc.Link(
-                    dbc.Button(
-                        'Log Out',
-                        style={"margin": "10px"}
-                    ),
-                    href="/",
-                    refresh=True,
+                dbc.DropdownMenu(
+                    label="User",
+                    children=[
+                        dbc.DropdownMenuItem(
+                            'Log In',
+                            id={"type": "login-button", "parent": "navbar"}, 
+                        ),
+                        dbc.DropdownMenuItem(
+                            'Log Out',
+                            href="/",
+                            external_link=True,
+                        ),
+                        dbc.DropdownMenuItem(
+                            'Change Password',
+                            id="change-password-button",
+                        )
+                    ],
+                    right=True,
+                    in_navbar=True,
+                    caret=True,
                 )
+
             ],
             id="navbar"
         )]
@@ -556,11 +644,12 @@ class GLAM_LAYOUT:
                         dbc.CardHeader(dbc.Row([
                             dbc.Col(
                                 html.Div(
-                                    html.P(
-                                        analysis.long_name
+                                    dcc.Markdown(
+                                        f"**{analysis.long_name}**:\t{analysis.description}"
                                     ), 
                                     style={"marginTop": "10px"}
-                                )
+                                ),
+                                width=10,
                             ),
                             dbc.Col(
                                 dcc.Link(
@@ -577,11 +666,13 @@ class GLAM_LAYOUT:
                                                     self.glam_db.get_dataset_uri(dataset_id)
                                                 )
                                                 for k, v in analysis.dynamic_defaults.items()
-                                            }
+                                            },
+                                            **analysis.defaults
                                         })
                                     )
                                 ),
-                                style={"textAlign": "right", "marginTop": "5px"}
+                                style={"textAlign": "right", "marginTop": "5px"},
+                                width=2,
                             )
                         ]))
                     ],
@@ -607,6 +698,7 @@ class GLAM_LAYOUT:
             TaxonomySunburstCard(),
             GenomeContainmentHeatmap() if self.glam_io.has_genomes(dataset_uri) and self.glam_io.has_genome_parameters(dataset_uri) else None,
             GenomeAssociationCard() if self.glam_io.has_genomes(dataset_uri) and self.glam_io.has_genome_parameters(dataset_uri) else None,
+            GenomeAlignmentsCard() if self.glam_io.has_genomes(dataset_uri) else None,
         ]
 
     # Key the analysis by `short_name`
@@ -739,6 +831,7 @@ class AnalysisCard:
         # Placeholders which will be replaced in the __init__
         # method used by each of the AnalysisCards below
         self.long_name = "Generic Card"
+        self.description = "Description of the card"
         self.short_name = "generic_card"
         self.args = {}
 
@@ -1072,7 +1165,8 @@ class RichnessCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Number of Genes Detected Per Specimen"
+        self.long_name = "Richness"
+        self.description = "Number of genes detected in each specimen"
         self.short_name = "specimen_summary"
         self.plot_list = []
         self.defaults = dict(
@@ -1172,7 +1266,8 @@ class ExperimentSummaryCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Overall Summary of Gene-Level Analysis"
+        self.long_name = "Experiment Overview"
+        self.description = "Summary metrics for entire analysis"
         self.short_name = "experiment_summary"
         self.plot_list = []
         self.defaults = dict()
@@ -1218,7 +1313,8 @@ class SingleSampleCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "CAGs Detected in a Single Sample"
+        self.long_name = "Single Sample"
+        self.description = "Abundance of CAGs in a single sample"
         self.short_name = "single_sample"
         self.plot_list = []
         self.defaults = dict(
@@ -1309,7 +1405,8 @@ class OrdinationCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Comparison of Specimens by Overall Composition (e.g. PCA)"
+        self.long_name = "Community Ordination"
+        self.description = "Comparison of specimens by overall composition (e.g. PCA)"
         self.short_name = "ordination"
         self.plot_list = []
         self.defaults = dict(
@@ -1441,7 +1538,8 @@ class CAGSummaryCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "CAG Descriptive Statistics (e.g. size)"
+        self.long_name = "CAG Characteristics"
+        self.description = "Summary metrics describing all CAGs (e.g. size)"
         self.short_name = "cag_summary"
         self.plot_list = []
         self.defaults = dict(
@@ -1542,7 +1640,8 @@ class CagAbundanceHeatmap(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Abundance of Multiple CAGs (heatmap)"
+        self.long_name = "CAG Abundance Heatmap"
+        self.description = "Relative abundance of multiple CAGs across all specimens"
         self.short_name = "cag_abund_heatmap"
         self.plot_list = []
         self.defaults = dict(
@@ -1708,7 +1807,8 @@ class AnnotationHeatmapCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Annotations of Multiple CAGs (heatmap)"
+        self.long_name = "CAG Annotation Heatmap"
+        self.description = "Annotations of genes across multiple CAGs (e.g. taxonomy)"
         self.short_name = "cag_annot_heatmap"
         self.plot_list = []
         self.defaults = dict(
@@ -1852,7 +1952,8 @@ class VolcanoCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Association of CAGs with Experiment Parameters (volcano plot)"
+        self.long_name = "Volcano Plot"
+        self.description = "Association of CAGs with experimental parameters"
         self.short_name = "volcano"
         self.plot_list = []
         self.defaults = dict(
@@ -1971,7 +2072,8 @@ class PlotCagCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Plot Individual CAG Abundance"
+        self.long_name = "Single CAG Plot"
+        self.description = "Abundance of a single CAG across all specimens"
         self.short_name = "plot_cag"
         self.plot_list = []
         self.defaults = dict(
@@ -2079,7 +2181,8 @@ class GenomeAssociationCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Summary of Genome Association with Parameters"
+        self.long_name = "Genome Association Scatterplot"
+        self.description = "Summary of genome-level association with experimental parameters"
         self.short_name = "genome_association"
         self.plot_list = []
         self.defaults = dict(
@@ -2168,7 +2271,8 @@ class TaxonomySunburstCard(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Taxonomic Assignment of Genes in a Single CAG"
+        self.long_name = "Single CAG Taxonomy"
+        self.description = "Taxonomic assignment of genes within a single CAG"
         self.short_name = "taxonomy_sunburst"
         self.plot_list = []
         self.defaults = dict()
@@ -2229,7 +2333,8 @@ class GenomeContainmentHeatmap(AnalysisCard):
 
     def __init__(self):
 
-        self.long_name = "Genome Containment Heatmap: Show Genomes Containing Genes from a Single CAG"
+        self.long_name = "Genome Containment Heatmap"
+        self.description = "Genomes containing genes from a single CAG"
         self.short_name = "genome_containment_heatmap"
         self.plot_list = []
         self.defaults = dict(
@@ -2317,6 +2422,180 @@ to that set of selected genomes.
         )
 
 
+###########################
+# GENOME ALIGNMENTS CARD #
+###########################
+class GenomeAlignmentsCard(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Genome Alignments"
+        self.description = "Map of gene alignments to a single genome"
+        self.short_name = "genome_alignments"
+        self.plot_list = []
+        self.defaults = dict(
+            parameter="",
+            window_size="50000"
+        )
+        self.dynamic_defaults = dict(
+            # By default, show the genome with the most genes aligning to a single CAG
+            genome_id=lambda glam_io, dataset_uri: glam_io.get_genomes_with_details(dataset_uri)[0]
+        )
+
+        self.help_text = """
+Detailed gene-level alignments are shown here for individual genomes,
+including details on the estimated association of genes with any parameter
+of interest. 
+
+After selecting a genome from the drop-down menu, the detailed list of
+alignments for that genome will be shown in the table. Clicking on any
+row in that table will then center the display on that gene. The amount
+of the genome shown in the display can be adjusted with the radio button
+below the plot, but individual gene alignments will not be shown above
+a certain window size (due to overplotting).
+
+When a parameter is selected the estimated coefficients of association
+for each CAG are shown in the table and a rolling window median Wald
+statistic is added in the plot.
+        """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Get the list of genomes available for plotting
+        genome_id_list = glam_io.get_genomes_with_details(dataset_uri)
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Get the details of all aligned genes for the selected genome
+        genome_aln_df = glam_io.get_genome_details(
+            dataset_uri,
+            self.args["genome_id"]
+        )
+
+        # Get the name for each genome from the manifest
+        genome_manifest = glam_io.get_genome_manifest(dataset_uri).set_index("id")
+        # Sort the genome options alphabetically by name
+        genome_options = OrderedDict()
+        for genome_id, genome_name in genome_manifest.reindex(
+            index=genome_id_list
+        ).sort_values(
+            by="name"
+        )["name"].iteritems():
+            genome_options[genome_id] = genome_name
+
+        # Get the options for the parameters which can be displayed
+        parameter_options = OrderedDict()
+        if glam_io.has_genome_parameters(dataset_uri):
+            for p in glam_io.get_genome_parameters(dataset_uri):
+                parameter_options[p] = p
+        else:
+            parameter_options["none"] = "None"
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    dbc.Col([], width=3),
+                    dbc.Col(
+                        self.dropdown_menu(
+                            label="Genome",
+                            options=genome_options,
+                            key="genome_id"
+                        ),
+                        width=6,
+                        align="center"
+                    ),
+                    dbc.Col([], width=3)
+                ]),
+                dbc.Row([
+                    dbc.Col([], width=1),
+                    dbc.Col(
+                        html.Div(
+                            dash_table.DataTable(
+                                id='genome-details-table',
+                                columns=[
+                                    {"name": "Gene Name", "id": "gene"},
+                                    {"name": "CAG", "id": "CAG"},
+                                    {"name": "Contig", "id": "contig"},
+                                    {"name": "Percent Identity", "id": "pident"},
+                                    {"name": "Start Position", "id": "contig_start"},
+                                    {"name": "End Position", "id": "contig_end"},
+                                ],
+                                data=genome_aln_df.to_dict(orient="records"),
+                                row_selectable='single',
+                                style_table={
+                                    'minWidth': '100%',
+                                },
+                                style_header={
+                                    "backgroundColor": "rgb(2,21,70)",
+                                    "color": "white",
+                                    "textAlign": "center",
+                                },
+                                page_action='native',
+                                page_size=20,
+                                filter_action='native',
+                                sort_action='native',
+                                hidden_columns=[],
+                                css=[{"selector": ".show-hide",
+                                        "rule": "display: none"}],
+                            ),
+                            style={"marginTop": "20px"}
+                        ),
+                        width=10,
+                        align="center"
+                    ),
+                    dbc.Col([], width=1)
+                ]),
+                dbc.Row([
+                    dbc.Col(
+                        dbc.Spinner(
+                            dcc.Graph(
+                                id="genome-alignment-plot"
+                            )
+                        ),
+                        width=12,
+                        align="center"
+                    )
+                ]),
+                dbc.Row([
+                    dbc.Col([], width=2),
+                    dbc.Col(
+                        self.multiselector(
+                            label="Show CAG Association By:",
+                            options=parameter_options,
+                            key="parameter"
+                        ),
+                        width=4,
+                        align="center"
+                    ),
+                    dbc.Col(
+                        self.dropdown_menu(
+                            label="Window Size",
+                            options=OrderedDict([
+                                ("10000", '10kb'),
+                                ("25000", '25kb'),
+                                ("50000", '50kb'),
+                                ("150000", '150kb'),
+                                ("500000", '500kb'),
+                                ("-1", 'All'),
+                            ]),
+                            key="window_size"
+                        ),
+                        width=4,
+                        align="center"
+                    ),
+                    dbc.Col([], width=2),
+                ])
+            ],
+        )
+
+
 #################
 # CARD TEMPLATE #
 #################
@@ -2325,6 +2604,7 @@ class CardTemplate(AnalysisCard):
     def __init__(self):
 
         self.long_name = ""
+        self.description = ""
         self.short_name = ""
         self.plot_list = []
         self.defaults = dict(
@@ -2352,148 +2632,5 @@ class CardTemplate(AnalysisCard):
             dataset_id,
             [],
         )
-
-
-# ###########################
-# # GENOME ALIGNMENTS CARD #
-# ###########################
-# def genome_alignments_card():
-#     return card_wrapper(
-#         "Genome Alignment Details",
-#         [
-#             dbc.Row([
-#                 dbc.Col([], width=3),
-#                 dbc.Col(
-#                     dcc.Dropdown(
-#                         id="genome-details-dropdown",
-#                         options=[],
-#                         value=None,
-#                     ),
-#                     width=6,
-#                     align="center"
-#                 ),
-#                 dbc.Col([], width=3)
-#             ]),
-#             dbc.Row([
-#                 dbc.Col([], width=1),
-#                 dbc.Col(
-#                     html.Div(
-#                         dash_table.DataTable(
-#                             id='genome-details-table',
-#                             columns=[
-#                                 {"name": "Gene Name", "id": "gene"},
-#                                 {"name": "CAG", "id": "CAG"},
-#                                 {"name": "Contig", "id": "contig"},
-#                                 {"name": "Percent Identity", "id": "pident"},
-#                                 {"name": "Start Position", "id": "contig_start"},
-#                                 {"name": "End Position", "id": "contig_end"},
-#                             ],
-#                             data=[
-#                                 {
-#                                     "gene": None, 
-#                                     "CAG": None,
-#                                     "contig": None,
-#                                     "pident": None,
-#                                     "contig_start": None,
-#                                     "contig_end": None,
-#                                 }
-#                             ],
-#                             row_selectable='single',
-#                             style_table={
-#                                 'minWidth': '100%',
-#                             },
-#                             style_header={
-#                                 "backgroundColor": "rgb(2,21,70)",
-#                                 "color": "white",
-#                                 "textAlign": "center",
-#                             },
-#                             page_action='native',
-#                             page_size=20,
-#                             filter_action='native',
-#                             sort_action='native',
-#                             hidden_columns=[],
-#                             css=[{"selector": ".show-hide",
-#                                     "rule": "display: none"}],
-#                         ),
-#                         style={"marginTop": "20px"}
-#                     ),
-#                     width=10,
-#                     align="center"
-#                 ),
-#                 dbc.Col([], width=1)
-#             ]),
-#             dbc.Row([
-#                 dbc.Col(
-#                     dbc.Spinner(
-#                         dcc.Graph(
-#                             id="genome-alignment-plot"
-#                         )
-#                     ),
-#                     width=12,
-#                     align="center"
-#                 )
-#             ]),
-#             dbc.Row([
-#                 dbc.Col([], width=4),
-#                 dbc.Col(
-#                     [
-#                         html.Label("Show CAG Association By:"),
-#                         html.Br(),
-#                         dcc.Dropdown(
-#                             id='genome-alignment-parameters',
-#                             options=[],
-#                             value=[],
-#                             multi=True,
-#                         )
-#                     ],
-#                     width=4,
-#                     align="center"
-#                 ),
-#                 dbc.Col(
-#                     [
-#                         html.Label("Window Size"),
-#                         html.Br(),
-#                         dcc.Dropdown(
-#                             id='genome-alignment-plot-width',
-#                             options=[
-#                                 {'label': '10kb', 'value': 10000},
-#                                 {'label': '25kb', 'value': 25000},
-#                                 {'label': '50kb', 'value': 50000},
-#                                 {'label': '150kb', 'value': 150000},
-#                                 # {'label': 'All', 'value': -1},
-#                             ],
-#                             value=25000,
-#                         )
-#                     ],
-#                     width=4,
-#                     align="center"
-#                 ),
-#             ])
-#         ],
-#         custom_id="genome-alignments-card",
-#         help_text="""
-# Detailed gene-level alignments are shown here for individual genomes,
-# including details on the estimated association of genes with any parameter
-# of interest. 
-
-# After selecting a genome from the drop-down menu, the detailed list of
-# alignments for that genome will be shown in the table. Clicking on any
-# row in that table will then center the display on that gene. The amount
-# of the genome shown in the display can be adjusted with the radio button
-# below the plot, but individual gene alignments will not be shown above
-# a certain window size (due to overplotting).
-
-# When a parameter is selected the estimated coefficients of association
-# for each CAG are shown in the table and a rolling window median Wald
-# statistic is added in the plot.
-# """
-#     )
-# #############################
-# # \ GENOME ALIGNMENTS CARD #
-# #############################
-
-
-
-
 
 

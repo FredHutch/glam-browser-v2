@@ -366,7 +366,25 @@ class GLAM_INDEX:
             for col_name in df.columns.values
         })
 
-        return df
+        # Shard CAGs by CAG_ID % 1000
+        for group_ix, group_df in df.assign(
+            group = df["CAG"].apply(
+                lambda cag_id: cag_id % 1000
+            )
+        ).groupby(
+            "group"
+        ):
+            yield "CAG", group_ix, group_df.drop(columns="group")
+
+        # Write out each specimen individually as well
+        for specimen_ix, specimen_name in enumerate(self.parse_manifest()["specimen"].values):
+
+            # Skip specimens which are in the manifest but which have no abundances
+            if specimen_name not in df.columns.values:
+                continue
+
+            # Emit the specimen index, as well as the values for the specimen itself
+            yield "specimen", specimen_ix, df.reindex(columns=["CAG", specimen_name])
 
     
     def add_to_cache(self, key_name):
@@ -705,11 +723,34 @@ class GLAM_INDEX:
             "cag_annotations"
         )
 
-        # Read in the CAG abundances
-        self.write(
-            self.parse_cag_abundances,
-            "cag_abundances"
-        )
+        # Check to see if the CAG abundances have already been written
+        if all([
+            self.key_exists(
+                self.key_uri(
+                    f"cag_abundances/CAG/{group_ix}", 
+                    filetype="feather"
+                )
+            )
+            for group_ix in range(1000)
+        ] + [
+            self.key_exists(
+                self.key_uri(
+                    f"cag_abundances/specimen/{specimen_ix}", 
+                    filetype="feather"
+                )
+            )
+            for specimen_ix in range(self.parse_manifest().shape[0])
+        ]):
+            logging.info("CAG Abundances: Present")
+        else:
+            logging.info("CAG Abundances: Reading")
+
+            # Parse out the CAG abundances by group (shard)
+            for group_name, group_ix, group_df in self.parse_cag_abundances():
+                self.write(
+                    group_df,
+                    f"cag_abundances/{group_name}/{group_ix}"
+                )
 
         # Read in the genome containments
         for group_name, group_ix, group_df in self.parse_genome_containment():

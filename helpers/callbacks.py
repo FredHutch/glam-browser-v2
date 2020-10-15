@@ -16,11 +16,18 @@ class GLAM_CALLBACKS:
         self.glam_layout = glam_layout
         self.glam_plotting = glam_plotting
 
-    def login_modal_is_open(self, pathname):
-        """The login modal is only open if pathname == '/login'."""
-        return pathname is not None and pathname == "/login"
+    def page_contents_children(
+        self, 
+        pathname, 
+        search_string, 
+        username, 
+        password,
+        login_modal_is_open
+    ):
+        # If the login modal is open, don't update
+        if login_modal_is_open:
+            raise PreventUpdate
 
-    def page_contents_children(self, pathname, search_string, username, password):
         show_style = {"display": "block"}
 
         # Direct to the login page
@@ -115,10 +122,77 @@ class GLAM_CALLBACKS:
         # Open and close the login modal
         @app.callback(
             Output("login-modal", "is_open"),
-            [Input("url", "pathname")]
+            [
+                Input({"type": "login-button", "parent": ALL}, "n_clicks"),
+                Input("login-modal-apply-button", "n_clicks")
+            ]
         )  # pylint: disable=unused-variable
-        def f(pathname):
-            return self.login_modal_is_open(pathname)
+        def login_modal_is_open(login_buttons, apply_button):
+            # If the login button has never been pressed, keep the modal closed
+            if all([v is None for v in login_buttons]):
+                return False
+
+            # Get the context which triggered the callback
+            ctx = dash.callback_context
+
+            # If a login button was the trigger
+            if "login-button" in ctx.triggered[0]["prop_id"]:
+                return True
+            # Otherwise, we can assume that the apply button was pressed
+            else:
+                return False
+
+        # Open and close the change-password modal
+        @app.callback(
+            Output("change-password-modal", "is_open"),
+            [
+                Input("change-password-button", "n_clicks"),
+                Input("change-password-close-button", "n_clicks")
+            ]
+        )  # pylint: disable=unused-variable
+        def change_password_modal_is_open(open_button, close_button):
+            # If the change password button has never been pressed, keep the modal closed
+            if open_button is None:
+                return False
+
+            # Get the context which triggered the callback
+            ctx = dash.callback_context
+
+            # Open the modal if the open button was pressed
+            return ctx.triggered[0]["prop_id"] == "change-password-button.n_clicks"
+
+        # Try to change the user's password
+        @app.callback(
+            Output("change-password-response-text", "children"),
+            [
+                Input("change-password-apply-button", "n_clicks")
+            ],
+            [
+                State("change-password-username", "value"),
+                State("change-password-old", "value"),
+                State("change-password-new", "value"),
+            ]
+        )  # pylint: disable=unused-variable
+        def change_password_response(apply_button, username, old_password, new_password):
+            # If the apply password button has never been pressed, don't update
+            if apply_button is None or apply_button == 0:
+                return ""
+
+            # If the username and password is incorrect, stop
+            if not self.glam_db.valid_username_password(username, old_password):
+                return "Incorrect username / password"
+
+            # Make sure that the password is of sufficient length
+            if new_password is None or len(new_password) < 8:
+                return "Please provide a new password with at least 8 characters"
+
+            # Otherwise, try to change the password
+            self.glam_db.set_password(
+                username=username,
+                password=new_password
+            )
+            return "Successfully changed password"
+
 
         # Fill in the page-contents while also controlling show/hide of the sub-navbar
         @app.callback(
@@ -131,10 +205,17 @@ class GLAM_CALLBACKS:
                 Input("url", "search"),
                 Input("username", "value"),
                 Input("password", "value"),
+                Input("login-modal", "is_open"),
             ],
         )  # pylint: disable=unused-variable
-        def g(url, search_string, username, password):
-            return self.page_contents_children(url, search_string, username, password)
+        def g(url, search_string, username, password, login_modal_is_open):
+            return self.page_contents_children(
+                url, 
+                search_string, 
+                username, 
+                password, 
+                login_modal_is_open
+            )
 
         # Update the 'brand' of the sub-navbar with the username, if valid
         @app.callback(
@@ -990,6 +1071,101 @@ class GLAM_CALLBACKS:
 
             else:
                 return f"{pathname}{search_string}"
+
+        #########################
+        # GENOME ALIGNMENT PLOT #
+        #########################
+        @app.callback(
+            Output("genome-alignment-plot", "figure"),
+            [
+                Input("genome-details-table", "selected_rows"),
+            ],
+            [
+                State("url", "pathname"),
+                State("url", "search"),
+                State("username", "value"),
+                State("password", "value"),
+            ]
+        )
+        def update_genome_alignment_plot(
+            selected_rows, 
+            pathname, 
+            search_string, 
+            username, 
+            password
+        ):
+            """Format the genome alignment plot."""
+            
+            # This particular plot is given its own callback because
+            # the plot needs to read from the 'selected_rows' in the
+            # genome-details-table, which is not currently wired into
+            # the search string href system
+            # TODO: Update the genome-details-table to hyperlink the 
+            # selected row and populate the search string
+
+            if pathname is None or "/d/" not in pathname:
+                return self.glam_plotting.empty_plot(
+                    title="No dataset selected"
+                )
+
+            # Parse the dataset name from the path
+            dataset_id = pathname.split("/")[2]
+
+            # Check to see if this user has permission to view this dataset
+            if not self.glam_db.user_can_access_dataset(dataset_id, username, password):
+                return self.glam_plotting.empty_plot(
+                    title="Permission denied"
+                )
+
+            # If no rows are selected, tell the user to select some
+            if selected_rows is None or len(selected_rows) == 0:
+                return self.glam_plotting.empty_plot(
+                    title="Please select a gene from the table above"
+                )
+
+            # Get the base path to the dataset
+            dataset_uri = self.glam_db.get_dataset_uri(dataset_id)
+
+            # Get the arguments in the search string
+            args = decode_search_string(search_string)
+
+            # Get the selected genome
+            genome_id = args["genome_id"]
+
+            # Get the genome manifest
+            manifest_df = self.glam_io.get_genome_manifest(dataset_uri)
+
+            # Get the table with the details of all alignments in this genome
+            details_df = self.glam_io.get_genome_details(dataset_uri, genome_id)
+
+            # Get the annotations for this genome, if any
+            annotation_df = self.glam_io.get_genome_annotations(
+                dataset_uri, genome_id)
+
+            # Get the CAG associations with the selected parameters
+            cag_association_dict = {}
+            if args.get("parameter") is not None:
+                if len(args["parameter"]) > 0:
+                    for parameter in args["parameter"].split(","):
+                        if len(parameter) > 0:
+                            cag_association_dict[
+                                parameter
+                            ] = self.glam_io.get_cag_associations(
+                                dataset_uri,
+                                parameter
+                            )
+
+            # Render the plot
+            return self.glam_plotting.genome_alignment_plot(
+                details_df,
+                selected_rows[0],
+                annotation_df,
+                manifest_df,
+                genome_id,
+                int(args["window_size"]),
+                cag_association_dict,
+            )
+
 
 
 def location_matches(full_href, pathname, args):
