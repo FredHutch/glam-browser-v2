@@ -1710,7 +1710,10 @@ class GLAM_PLOTTING:
 
         # implicit else
 
-        for _, r in cag_genome_containment.iterrows():
+        for _, r in cag_genome_containment.sort_values(
+            by="n_genes",
+            ascending=False
+        ).iterrows():
             # Skip genomes which are below the threshold
             if r["cag_prop"] < min_cag_prop:
                 continue
