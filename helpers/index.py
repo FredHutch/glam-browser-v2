@@ -454,20 +454,22 @@ class GLAM_INDEX:
         genome_ix = pd.Series(
             list(range(genome_manifest_df.shape[0])),
             index=genome_manifest_df["id"].values
-        ).apply(
-            lambda v: v % 1000
         )
 
-        # Yield each of the tables for each genome
-        for genome_id, genome_df in df.reindex(
+        # Use this index value to assign a group to every genome,
+        # and then yield each of the tables for each group
+        for group_ix, group_df in df.assign(
+            group = df["genome"].apply(genome_ix.get).apply(lambda n: n % 1000)
+        ).reindex(
             columns=[
                 "CAG",
                 "genome",
                 "n_genes",
                 "cag_prop",
+                "group",
             ]
-        ).groupby("genome"):
-            yield "genome", genome_ix.loc[genome_id], genome_df.sort_values(by="n_genes", ascending=False)
+        ).groupby("group"):
+            yield "genome", group_ix, group_df.sort_values(by="n_genes", ascending=False).drop(columns="group")
 
     def parse_top_genome_containment(self, max_n_cags=250000, min_cag_prop=0.25):
         """Format a table of the top genome containment per CAG."""
