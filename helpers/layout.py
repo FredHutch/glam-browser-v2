@@ -215,14 +215,11 @@ class GLAM_LAYOUT:
                 ),
                 dbc.ModalFooter(
                     [
-                        dcc.Link(
-                            dbc.Button(
-                                "Apply",
-                                id="login-modal-apply-button",
-                                n_clicks=0,
-                            ),
-                            href="/"
-                        )
+                        dbc.Button(
+                            "Apply",
+                            id="login-modal-apply-button",
+                            n_clicks=0,
+                        ),
                     ]
                 ),
             ],
@@ -347,7 +344,7 @@ class GLAM_LAYOUT:
         return self.jumbotron_page([
             dcc.Markdown("### Welcome to the GLAM Browser\n\nTo get started, log in to your account or browse some publicly available datasets."),
             html.Br(),
-            dcc.Link(dbc.Button("Log In", style={"margin": "10px"}), href="/login"),
+            dbc.Button("Log In", style={"margin": "10px"}, id={"type": "login-button", "parent": "logged-out-page"}),
             dcc.Link(dbc.Button("Public Datasets", style={"margin": "10px"}), href="/public"),
         ])
 
@@ -364,12 +361,10 @@ class GLAM_LAYOUT:
             color="primary",
             dark=True,
             children=[
-                dcc.Link(
-                    dbc.Button(
-                        'Log In',
-                        style={"margin": "10px"}
-                    ),
-                    href="/login"
+                dbc.Button(
+                    'Log In',
+                    style={"margin": "10px"},
+                    id={"type": "login-button", "parent": "navbar"}
                 ),
                 dcc.Link(
                     dbc.Button(

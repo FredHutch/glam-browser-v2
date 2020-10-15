@@ -16,10 +16,6 @@ class GLAM_CALLBACKS:
         self.glam_layout = glam_layout
         self.glam_plotting = glam_plotting
 
-    def login_modal_is_open(self, pathname):
-        """The login modal is only open if pathname == '/login'."""
-        return pathname is not None and pathname == "/login"
-
     def page_contents_children(self, pathname, search_string, username, password):
         show_style = {"display": "block"}
 
@@ -115,10 +111,25 @@ class GLAM_CALLBACKS:
         # Open and close the login modal
         @app.callback(
             Output("login-modal", "is_open"),
-            [Input("url", "pathname")]
+            [
+                Input({"type": "login-button", "parent": ALL}, "n_clicks"),
+                Input("login-modal-apply-button", "n_clicks")
+            ]
         )  # pylint: disable=unused-variable
-        def f(pathname):
-            return self.login_modal_is_open(pathname)
+        def login_modal_is_open(login_buttons, apply_button):
+            # If the login button has never been pressed, keep the modal closed
+            if all([v is None for v in login_buttons]):
+                return False
+
+            # Get the context which triggered the callback
+            ctx = dash.callback_context
+
+            # If a login button was the trigger
+            if "login-button" in ctx.triggered[0]["prop_id"]:
+                return True
+            # Otherwise, we can assume that the apply button was pressed
+            else:
+                return False
 
         # Fill in the page-contents while also controlling show/hide of the sub-navbar
         @app.callback(
