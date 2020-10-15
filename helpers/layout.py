@@ -286,6 +286,21 @@ class GLAM_LAYOUT:
                                 ),
                             ]
                         ),
+                        dbc.FormGroup(
+                            [
+                                dbc.Label("Confirm New Password"),
+                                dbc.Input(
+                                    type="password", 
+                                    id="change-password-confirm", 
+                                    placeholder="Re-enter new password",
+                                    debounce=True,
+                                ),
+                                dbc.FormText(
+                                    "Please provide the new password for your GLAM Browser account",
+                                    color="secondary",
+                                ),
+                            ]
+                        ),
                         html.Div(
                             children=None,
                             id="change-password-response-text"

@@ -171,12 +171,17 @@ class GLAM_CALLBACKS:
                 State("change-password-username", "value"),
                 State("change-password-old", "value"),
                 State("change-password-new", "value"),
+                State("change-password-confirm", "value"),
             ]
         )  # pylint: disable=unused-variable
-        def change_password_response(apply_button, username, old_password, new_password):
+        def change_password_response(apply_button, username, old_password, new_password, confirm_password):
             # If the apply password button has never been pressed, don't update
             if apply_button is None or apply_button == 0:
                 return ""
+
+            # Make sure that the passwords match
+            if confirm_password != new_password:
+                return "Passwords do not match"
 
             # If the username and password is incorrect, stop
             if not self.glam_db.valid_username_password(username, old_password):
