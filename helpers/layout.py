@@ -213,6 +213,16 @@ class GLAM_LAYOUT:
                                     "Please provide the password for your GLAM Browser account",
                                     color="secondary",
                                 ),
+                                dbc.FormText(
+                                    "",
+                                    color="primary",
+                                    id="login-modal-response-text"
+                                ),
+                                dbc.FormText(
+                                    "",
+                                    color="primary",
+                                    id="logout-response-text"
+                                ),
                             ]
                         ),
                     ]
@@ -222,6 +232,11 @@ class GLAM_LAYOUT:
                         dbc.Button(
                             "Apply",
                             id="login-modal-apply-button",
+                            n_clicks=0,
+                        ),
+                        dbc.Button(
+                            "Close",
+                            id="login-modal-close-button",
                             n_clicks=0,
                         ),
                     ]
@@ -469,8 +484,7 @@ class GLAM_LAYOUT:
                         ),
                         dbc.DropdownMenuItem(
                             'Log Out',
-                            href="/",
-                            external_link=True,
+                            id="log-out-button",
                         ),
                         dbc.DropdownMenuItem(
                             'Change Password',
@@ -602,16 +616,18 @@ class GLAM_LAYOUT:
                         dbc.Label(
                             "{}: {:,} specimens".format(
                                 dataset_name,
-                                n
-                            )
+                                n,
+                            ),
+                            color="info"
                         ),
-                        style={"textAlign": "left"}
+                        style={"textAlign": "left", "fontWeight": "bold"}
                     ),
                     dbc.Col(
                         dcc.Link(
                             dbc.Button(
                                 "Open Dataset" if action == "open" else "Close Dataset", 
-                                color="secondary"
+                                color="info",
+                                outline=True
                             ),
                             href=href,
                         ),
@@ -619,7 +635,9 @@ class GLAM_LAYOUT:
                     )
                 ])
             ),
-            style={"marginTop": "10px", "marginBottom": "10px"}
+            style={"marginTop": "10px", "marginBottom": "10px"},
+            color="info",
+            outline=True
         )
 
 
@@ -734,10 +752,10 @@ class GLAM_LAYOUT:
         ].defaults
 
     # Return the page for a spcific analysis
-    def analysis_page(self, username, password, dataset_id, analysis_name, search_string):
+    def analysis_page(self, username, dataset_id, analysis_name, search_string):
 
         # Make sure that the user is allowed to access this dataset (and is logged in if required)
-        if self.glam_db.user_can_access_dataset(dataset_id, username, password) is False:
+        if self.glam_db.user_can_access_dataset(dataset_id, username) is False:
             return self.page_not_found()
 
         # Make sure we have this analysis

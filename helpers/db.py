@@ -3,6 +3,7 @@ from expiringdict import ExpiringDict
 import logging
 import mysql.connector
 from sqlalchemy import create_engine
+from time import time
 import pandas as pd
 import random
 import string
@@ -117,6 +118,9 @@ class GLAM_DB:
         # `user_bookmark`: name, bookmark, bookmark_order
         mycursor.execute("""CREATE TABLE IF NOT EXISTS user_bookmark(name VARCHAR(40) NOT NULL, bookmark VARCHAR(255) NOT NULL, bookmark_name VARCHAR(255) NOT NULL, bookmark_order INT(2) NOT NULL);""")
 
+        # `user_tokens`: user, token, expiration
+        mycursor.execute("""CREATE TABLE IF NOT EXISTS user_tokens(user VARCHAR(40) NOT NULL, token VARCHAR(255) NOT NULL, expiration VARCHAR(255) NOT NULL);""")
+
         # Commit all changes
         self.mysql_engine.commit()
 
@@ -198,11 +202,8 @@ class GLAM_DB:
             ]))
             print("\n------\n")
 
-    def user_datasets(self, username, password):
+    def user_datasets(self, username):
         """Return the list of datasets which this user is allowed to access."""
-        if self.valid_username_password(username, password) is False:
-            return []
-
         # Get the list of datasets that each user can access
         dataset_access = self.read_table("dataset_access")
 
@@ -214,15 +215,12 @@ class GLAM_DB:
             "dataset_id"
         ].tolist()
 
-    def user_can_access_dataset(self, dataset, username, password):
+    def user_can_access_dataset(self, dataset, username):
         """Return True/False indicating whether this user can access this password."""
 
         # Check if this dataset is publicly accessible
         if dataset in self.public_datasets():
             return True
-
-        if self.valid_username_password(username, password) is False:
-            return False
 
         # Get the list of datasets that each user can access
         dataset_access = self.read_table("dataset_access")
@@ -446,10 +444,10 @@ class GLAM_DB:
         return ''.join(random.choice(string.ascii_letters) for i in range(length))
 
     # Get a user's bookmarks
-    def user_bookmarks(self, username, password):
+    def user_bookmarks(self, username):
 
         # If the username and password is not valid
-        if self.valid_username_password(username, password) is False:
+        if username is None:
 
             # Return an empty list
             return []
@@ -473,10 +471,10 @@ class GLAM_DB:
                 ).to_dict(orient="records")
 
     # Save a bookmark for a user
-    def save_bookmark(self, username, password, location, description):
+    def save_bookmark(self, username, location, description):
 
-        # If the username and password is valid
-        if self.valid_username_password(username, password):
+        # If the username is valid
+        if username is not None:
 
             # Read the table of bookmarks
             bookmark_df = self.read_table("user_bookmark", check_cache=False)
@@ -509,13 +507,13 @@ class GLAM_DB:
             )
 
     # Delete a bookmark for a user
-    def delete_bookmark(self, username, password, bookmark_ix):
+    def delete_bookmark(self, username, bookmark_ix):
 
         logging.info(f"Deleting bookmark {bookmark_ix} for {username}")
 
         # If the username and password is valid
-        if not self.valid_username_password(username, password):
-            logging.info(f"Username is not valid ({username})")
+        if username is None:
+            logging.info(f"Username is not valid")
             return
 
         # Read the table of bookmarks
@@ -565,3 +563,106 @@ class GLAM_DB:
                 user_bookmark_df,
                 if_exists="append"
             )
+
+    # Generate a login token for a given user
+    def get_token(self, username, password, token_length=255):
+
+        # Make sure that the provided username and password are valid
+        assert self.valid_username_password(username, password), "Invalid username/password"
+
+        # Generate a random string
+        token_string = self.random_string(token_length)
+
+        # Set the expiration date 1 day in the future
+        expiration_date = str(int(time() + (3600 * 24)))
+
+        # Add this token to the database
+        self.write_table(
+            "user_tokens",
+            pd.DataFrame([{
+                "user": username,
+                "token": token_string,
+                "expiration": expiration_date
+            }]),
+            if_exists="append"
+        )
+
+        return token_string
+
+    # Given a token, return the username (if they are logged in)
+    def decode_token(self, token_string):
+
+        # Make sure there is a token provided
+        if token_string is None or len(token_string) < 10:
+            return None
+
+        # See if the username and expiration date are in the cache
+        username, expiration_date = self.get_token_from_cache(token_string)
+
+        # If there was no key in the cache, check the database
+        if username is None:
+            username, expiration_date = self.get_token_from_db(token_string)
+
+            # If this is a valid token, then add it to the cache
+            if username is not None:
+                self.set_token_in_cache(
+                    token_string,
+                    username,
+                    expiration_date
+                )
+
+        # Check the expiration date
+        if expiration_date <= time():
+            return None
+        else:
+            # Return the username
+            return username
+    
+    def get_token_from_cache(self, token_string):
+        """Check the cache for a given token."""
+
+        # Make a unique key for this token in the cache
+        cache_key = f"token-{token_string}"
+
+        # Check the cache
+        if self.cache.get(cache_key) is not None:
+            return self.cache.get(cache_key)
+        else:
+            return None, None
+
+    def set_token_in_cache(self, token_string, username, expiration_date):
+        """Add a given token to the cache."""
+
+        # Make a unique key for this token in the cache
+        cache_key = f"token-{token_string}"
+
+        # Add to the cache
+        if self.using_redis:
+            self.cache.set(
+                cache_key,
+                (username, expiration_date),
+                timeout=self.cache_timeout,
+            )
+        else:
+            self.cache[cache_key] = (username, expiration_date)
+
+    def get_token_from_db(self, token_string):
+        """Check the database for a given token."""
+
+        # Get the list of all tokens
+        token_df = self.read_table("user_tokens", check_cache=False)
+        if token_df.shape[0] == 0:
+            return None, None
+
+        # Set the index by token
+        token_df.set_index("token", inplace=True)
+
+        # Check to see if this token is in the table
+        if token_string not in token_df.index.values:
+            return None, None
+
+        # Return the username and expiration date
+        username = token_df.loc[token_string, "user"]
+        expiration_date = float(token_df.loc[token_string, "expiration"])
+
+        return username, expiration_date

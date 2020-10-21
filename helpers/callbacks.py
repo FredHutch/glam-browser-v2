@@ -2,6 +2,7 @@
 from dash.dependencies import Input, Output, State, MATCH, ALL
 from dash.exceptions import PreventUpdate
 import dash
+import flask
 import json
 from time import sleep
 from .common import encode_search_string
@@ -20,8 +21,7 @@ class GLAM_CALLBACKS:
         self, 
         pathname, 
         search_string, 
-        username, 
-        password,
+        token, 
         login_modal_is_open
     ):
         # If the login modal is open, don't update
@@ -29,6 +29,9 @@ class GLAM_CALLBACKS:
             raise PreventUpdate
 
         show_style = {"display": "block"}
+
+        # Check to see if the user is logged in
+        username = self.glam_db.decode_token(token)
 
         # Direct to the login page
         if pathname == "/login":
@@ -41,18 +44,18 @@ class GLAM_CALLBACKS:
 
             return self.glam_layout.dataset_list(
                 self.glam_db.public_datasets(),
-                username if self.glam_db.valid_username_password(username, password) else "Anonymous User"
+                "Anonymous User"
             ), show_style
 
         # The user is attempting to view all datasets
         elif pathname == "/datasets" or pathname == "/" or pathname == "":
 
             # Check to see if the user is logged in
-            if self.glam_db.valid_username_password(username, password):
+            if username is not None:
 
                 # Show the datasets for this user
                 return self.glam_layout.dataset_list(
-                    self.glam_db.user_datasets(username, password),
+                    self.glam_db.user_datasets(username),
                     username
                 ), show_style
 
@@ -69,14 +72,13 @@ class GLAM_CALLBACKS:
 
             # Check to see if this dataset is accessible
             # (either because it is public, or because this user has access)
-            if self.glam_db.user_can_access_dataset(dataset_id, username, password):
+            if self.glam_db.user_can_access_dataset(dataset_id, username):
 
                 # Parse the analysis name
                 analysis_name = pathname.rsplit("/", 1)[1]
 
                 return self.glam_layout.analysis_page(
                     username, 
-                    password, 
                     dataset_id, 
                     analysis_name, 
                     search_string
@@ -92,12 +94,11 @@ class GLAM_CALLBACKS:
             if self.glam_db.user_can_access_dataset(
                 dataset_id,
                 username,
-                password
             ):
                 return self.glam_layout.dataset_display(username, dataset_id, search_string), show_style
 
-        # catch-all else
-        return self.glam_layout.page_not_found(), show_style
+        # User is NOT logged in
+        return self.glam_layout.logged_out_page(), show_style
 
     # Function to toggle a modal
     def toggle_modal(self, n1, n2, is_open):
@@ -128,7 +129,7 @@ class GLAM_CALLBACKS:
             Output("login-modal", "is_open"),
             [
                 Input({"type": "login-button", "parent": ALL}, "n_clicks"),
-                Input("login-modal-apply-button", "n_clicks")
+                Input("login-modal-close-button", "n_clicks")
             ]
         )  # pylint: disable=unused-variable
         def login_modal_is_open(login_buttons, apply_button):
@@ -142,9 +143,51 @@ class GLAM_CALLBACKS:
             # If a login button was the trigger
             if "login-button" in ctx.triggered[0]["prop_id"]:
                 return True
-            # Otherwise, we can assume that the apply button was pressed
+            # Otherwise, we can assume that the "Close" button was pressed
             else:
                 return False
+
+        # Action triggered by the login "Apply" button
+        @app.callback(
+            Output("login-modal-response-text", "children"),
+            [
+                Input("login-modal-apply-button", "n_clicks")
+            ],
+            [
+                State("username", "value"),
+                State("password", "value"),
+            ]
+        )  # pylint: disable=unused-variable
+        def login_modal_apply_button(apply_button, username, password):
+            # Get the context which triggered the callback
+            ctx = dash.callback_context
+
+            # The apply button has not yet been pressed
+            if apply_button is None or apply_button == 0:
+                raise PreventUpdate
+
+            # Check if the username and password are valid
+            if not self.glam_db.valid_username_password(username, password):
+                return "Incorrect username / password"
+
+            # At this point, the username and password must be incorrect
+            # Get the expiring token
+            try:
+                token_string = self.glam_db.get_token(username, password)
+            except:
+                return "Error generating login token"
+
+            assert token_string is not None, "Generated token is empty"
+
+            # Save the token
+            ctx.response.set_cookie('glam token', token_string)
+            try:
+                ctx.response.set_cookie('glam token', token_string)
+            except:
+                return "Error saving login token"
+
+            # Report success to the user
+            return "Login successful"
 
         # Open and close the change-password modal
         @app.callback(
@@ -204,6 +247,7 @@ class GLAM_CALLBACKS:
 
 
         # Fill in the page-contents while also controlling show/hide of the sub-navbar
+        # This callback also updates when the user logs out
         @app.callback(
             [
                 Output("page-content", "children"),
@@ -212,17 +256,29 @@ class GLAM_CALLBACKS:
             [
                 Input("url", "pathname"),
                 Input("url", "search"),
-                Input("username", "value"),
-                Input("password", "value"),
                 Input("login-modal", "is_open"),
+                Input("log-out-button", "n_clicks"),
             ],
         )  # pylint: disable=unused-variable
-        def g(url, search_string, username, password, login_modal_is_open):
+        def g(url, search_string, login_modal_is_open, logout_button):
+            # Get the callback context
+            ctx = dash.callback_context
+
+            # Check if the logout button was clicked
+            if ctx.triggered and ctx.triggered[0]["prop_id"] == "log-out-button.n_clicks":
+                # Delete the token
+                ctx.response.set_cookie('glam token', "")
+                token_string = None
+
+            else:
+
+                # Get the login token, if any is present
+                token_string = flask.request.cookies.get('glam token')
+
             return self.page_contents_children(
                 url, 
                 search_string, 
-                username, 
-                password, 
+                token_string,
                 login_modal_is_open
             )
 
@@ -230,12 +286,15 @@ class GLAM_CALLBACKS:
         @app.callback(
             Output("sub-navbar", "brand"),
             [
-                Input("username", "value"),
-                Input("password", "value"),
+                Input("login-modal-apply-button", "n_clicks")
             ],
         )  # pylint: disable=unused-variable
-        def h(username, password):
-            if self.glam_db.valid_username_password(username, password):
+        def h(_):
+            # Get the login token, if any is present
+            token_string = flask.request.cookies.get('glam token')
+            username = self.glam_db.decode_token(token_string)
+
+            if username is not None:
                 return username
             else:
                 return "Anonymous"
@@ -401,8 +460,6 @@ class GLAM_CALLBACKS:
             ],
             [
                 Input("url", "pathname"),
-                Input("username", "value"),
-                Input("password", "value"),
             ],
             [
                 State("manifest-table", "selected_rows"),
@@ -410,8 +467,11 @@ class GLAM_CALLBACKS:
             ]
         )
         def update_manifest_table(
-            pathname, username, password, selected_rows, columns_selected
+            pathname, selected_rows, columns_selected
         ):
+            # Get the login token, if any is present
+            token_string = flask.request.cookies.get('glam token')
+            username = self.glam_db.decode_token(token_string)
 
             # Set up the empty data object
             empty_data = [{'specimen': 'none'}]
@@ -424,7 +484,9 @@ class GLAM_CALLBACKS:
             dataset_id = pathname.split("/")[2]
 
             # Check to see if this user has permission to view this dataset
-            if self.glam_db.user_can_access_dataset(dataset_id, username, password) is False:
+            if username is None:
+                return empty_data, empty_columns, [], [], [], [], None
+            elif not self.glam_db.user_can_access_dataset(dataset_id, username):
                 return empty_data, empty_columns, [], [], [], [], None
 
             # Get the base path to the dataset
@@ -473,18 +535,18 @@ class GLAM_CALLBACKS:
             ],
             [
                 Input("url", "pathname"),
-                Input("username", "value"),
-                Input("password", "value"),
                 Input("select-specimens-col", "value"),
             ]
         )
         def values_for_specimen_filtering(
             pathname,
-            username,
-            password,
             filter_col,
         ):
             """Fill in the values from a column which are available for filtering."""
+            # Get the login token, if any is present
+            token_string = flask.request.cookies.get('glam token')
+            username = self.glam_db.decode_token(token_string)
+
             # Make default output
             disabled_output = [{"label": "none", "value": "none"}], "none"
             
@@ -496,7 +558,9 @@ class GLAM_CALLBACKS:
             dataset_id = pathname.split("/")[2]
 
             # Check to see if this user has permission to view this dataset
-            if self.glam_db.user_can_access_dataset(dataset_id, username, password) is False:
+            if username is None:
+                return disabled_output
+            elif self.glam_db.user_can_access_dataset(dataset_id, username) is False:
                 return disabled_output
 
             # Get the base path to the dataset
@@ -528,8 +592,6 @@ class GLAM_CALLBACKS:
             [
                 Input("url", "pathname"),
                 Input("url", "search"),
-                Input("username", "value"),
-                Input("password", "value"),
                 Input("select-specimens-show-hide", "value"),
                 Input("select-specimens-col", "value"),
                 Input("select-specimens-comparitor", "value"),
@@ -539,14 +601,16 @@ class GLAM_CALLBACKS:
         def bulk_mask_specimens_using_formula(
             pathname,
             search_string,
-            username,
-            password,
             filter_operation,
             filter_col,
             filter_comparison,
             filter_value
         ):
             """Based on the user's specifications, format an href to show or mask a set of specimens."""
+            # Get the login token, if any is present
+            token_string = flask.request.cookies.get('glam token')
+            username = self.glam_db.decode_token(token_string)
+
             # Make default output for a disabled button
             disabled_output = f"{pathname}{search_string}", True, "Apply"
             
@@ -558,7 +622,9 @@ class GLAM_CALLBACKS:
             dataset_id = pathname.split("/")[2]
 
             # Check to see if this user has permission to view this dataset
-            if self.glam_db.user_can_access_dataset(dataset_id, username, password) is False:
+            if username is None:
+                return disabled_output
+            if not self.glam_db.user_can_access_dataset(dataset_id, username):
                 return disabled_output
 
             # Get the base path to the dataset
@@ -657,17 +723,19 @@ class GLAM_CALLBACKS:
             [
                 Input("url", "pathname"),
                 Input("url", "search"),
-                Input("username", "value"),
-                Input("password", "value"),
             ],
             [
                 State({"name": "experiment-summary", "index": MATCH}, "style")
             ]
         )
-        def update_experiment_summary_card(pathname, search_string, username, password, _):
+        def update_experiment_summary_card(pathname, search_string, _):
             # Make sure we're looking at a dataset
             if "/d/" not in pathname:
                 raise PreventUpdate
+
+            # Get the login token, if any is present
+            token_string = flask.request.cookies.get('glam token')
+            username = self.glam_db.decode_token(token_string)
 
             # Parse the dataset name from the path
             dataset_id = pathname.split("/")[2]
@@ -676,7 +744,6 @@ class GLAM_CALLBACKS:
             if self.glam_db.user_can_access_dataset(
                 dataset_id,
                 username,
-                password
             ):
                 # Get the base path to the dataset
                 dataset_uri = self.glam_db.get_dataset_uri(dataset_id)
@@ -695,17 +762,20 @@ class GLAM_CALLBACKS:
             [
                 Input("url", "pathname"),
                 Input("url", "search"),
-                Input("username", "value"),
-                Input("password", "value"),
             ],
             [
                 State({"name": "ordination-anosim-results", "index": MATCH}, "style"),
             ]
         )
-        def anosim_results(pathname, search_string, username, password, _):
+        def anosim_results(pathname, search_string, _):
 
             if "/d/" not in pathname:
                 raise PreventUpdate
+
+            # Get the login token, if any is present
+            token_string = flask.request.cookies.get('glam token')
+            username = self.glam_db.decode_token(token_string)
+
             # Parse the dataset name from the path
             dataset_id = pathname.split("/")[2]
 
@@ -727,7 +797,6 @@ class GLAM_CALLBACKS:
             if self.glam_db.user_can_access_dataset(
                 dataset_id,
                 username,
-                password
             ):
                 # Get the base path to the dataset
                 dataset_uri = self.glam_db.get_dataset_uri(dataset_id)
@@ -752,14 +821,17 @@ class GLAM_CALLBACKS:
             [
                 Input("url", "pathname"),
                 Input("url", "search"),
-                Input("username", "value"),
-                Input("password", "value"),
             ],
             [State({"type": "analysis-card-plot", "name": MATCH}, "style")]
         )
-        def render_plots(pathname, search_string, username, password, _):
+        def render_plots(pathname, search_string, _):
             # Get the callback context
             ctx = dash.callback_context
+            # Get the login token, if any is present
+            token_string = flask.request.cookies.get('glam token')
+            username = self.glam_db.decode_token(token_string)
+            if username is None:
+                raise PreventUpdate
 
             # Read the name of the plot from the ID of the State
             plot_name = list(ctx.states.keys())[0]
@@ -780,7 +852,6 @@ class GLAM_CALLBACKS:
             if not self.glam_db.user_can_access_dataset(
                 dataset_id,
                 username,
-                password
             ):
                 raise PreventUpdate
 
@@ -959,21 +1030,23 @@ class GLAM_CALLBACKS:
         @app.callback(
             Output("bookmarks-modal-body", "children"),
             [
-                Input("username", "value"),
-                Input("password", "value"),
                 Input({"type": "close-modal", "name": "save-bookmark"}, "n_clicks"),
                 Input({"name": "delete-bookmark", "index": ALL}, "n_clicks")
             ]
         )
-        def display_bookmarks(username, password, _a, _b):
+        def display_bookmarks(_a, _b):
 
             # Not the best solution, but this is used to wait for
             # database update to be complete after bookmark deletion
             sleep(1)
 
+            # Get the login token, if any is present
+            token_string = flask.request.cookies.get('glam token')
+            username = self.glam_db.decode_token(token_string)
+
             # Display the list of bookmarks for this user            
             return self.glam_layout.bookmark_list(
-                self.glam_db.user_bookmarks(username, password)
+                self.glam_db.user_bookmarks(username)
             )
 
         ################################################
@@ -1004,20 +1077,22 @@ class GLAM_CALLBACKS:
                 Input("save-bookmark-button", "n_clicks"),
             ],
             [
-                State("username", "value"),
-                State("password", "value"),
                 State("url", "pathname"),
                 State("url", "search"),
                 State("save-bookmark-name", "value"),
                 State({"type": "close-modal", "name": "save-bookmark"}, "n_clicks")
             ]
         )
-        def save_bookmark(save_nclicks, username, password, pathname, search_string, bookmark_name, n_clicks):
+        def save_bookmark(save_nclicks, pathname, search_string, bookmark_name, n_clicks):
+            # Get the login token, if any is present
+            token_string = flask.request.cookies.get('glam token')
+            username = self.glam_db.decode_token(token_string)
+            
             # Save this bookmark
-            if save_nclicks is not None:
+            if username is not None and save_nclicks is not None:
 
                 self.glam_db.save_bookmark(
-                    username, password, f"{pathname}{search_string}", bookmark_name
+                    username, f"{pathname}{search_string}", bookmark_name
                 )
 
                 # 'click' the close button
@@ -1032,22 +1107,25 @@ class GLAM_CALLBACKS:
         @app.callback(
             Output({"name": "delete-bookmark", "index": MATCH}, "style"),
             [
-                Input("username", "value"),
-                Input("password", "value"),
                 Input({"name": "delete-bookmark", "index": MATCH}, "n_clicks")
             ],
             [
                 State({"name": "delete-bookmark", "index": MATCH}, "style")
             ]
         )
-        def delete_bookmark(username, password, n_clicks, style):
+        def delete_bookmark(n_clicks, style):
+            # Get the callback context
             ctx = dash.callback_context
-            if ctx.triggered:
+            # Get the login token, if any is present
+            token_string = flask.request.cookies.get('glam token')
+            username = self.glam_db.decode_token(token_string)
+
+            if username is not None and ctx.triggered:
                 # Get the index of the bookmark which is to be deleted
                 ix = self.parse_callback_trigger(ctx)["index"]
                 
                 # Delete the bookmark
-                self.glam_db.delete_bookmark(username, password, ix)
+                self.glam_db.delete_bookmark(username, ix)
 
             return style
 
@@ -1092,18 +1170,18 @@ class GLAM_CALLBACKS:
             [
                 State("url", "pathname"),
                 State("url", "search"),
-                State("username", "value"),
-                State("password", "value"),
             ]
         )
         def update_genome_alignment_plot(
             selected_rows, 
             pathname, 
             search_string, 
-            username, 
-            password
         ):
             """Format the genome alignment plot."""
+
+            # Get the login token, if any is present
+            token_string = flask.request.cookies.get('glam token')
+            username = self.glam_db.decode_token(token_string)
             
             # This particular plot is given its own callback because
             # the plot needs to read from the 'selected_rows' in the
@@ -1120,8 +1198,14 @@ class GLAM_CALLBACKS:
             # Parse the dataset name from the path
             dataset_id = pathname.split("/")[2]
 
+            # Check to see if the user is logged in
+            if username is None:
+                return self.glam_plotting.empty_plot(
+                    title="Logged out"
+                )
+
             # Check to see if this user has permission to view this dataset
-            if not self.glam_db.user_can_access_dataset(dataset_id, username, password):
+            if not self.glam_db.user_can_access_dataset(dataset_id, username):
                 return self.glam_plotting.empty_plot(
                     title="Permission denied"
                 )
