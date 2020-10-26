@@ -830,8 +830,6 @@ class GLAM_CALLBACKS:
             # Get the login token, if any is present
             token_string = flask.request.cookies.get('glam token')
             username = self.glam_db.decode_token(token_string)
-            if username is None:
-                raise PreventUpdate
 
             # Read the name of the plot from the ID of the State
             plot_name = list(ctx.states.keys())[0]
@@ -844,6 +842,10 @@ class GLAM_CALLBACKS:
 
             # Parse the dataset name from the path
             dataset_id = pathname.split("/d/")[1].split("/", 1)[0]
+
+            # If the user is not logged in, and the dataset is not public, don't render
+            if not self.glam_db.user_can_access_dataset(dataset_id, username):
+                raise PreventUpdate
 
             # Parse the analysis name from the path
             analysis_id = pathname.split("/a/")[1].split("/", 1)[0]
