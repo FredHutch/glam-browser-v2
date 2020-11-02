@@ -225,7 +225,7 @@ class GLAM_DB:
         # Get the list of datasets that each user can access
         dataset_access = self.read_table("dataset_access")
 
-        if username not in dataset_access["user_name"].values:
+        if username is None or username not in dataset_access["user_name"].values:
             return False
 
         return dataset in dataset_access.loc[

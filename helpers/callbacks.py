@@ -484,9 +484,7 @@ class GLAM_CALLBACKS:
             dataset_id = pathname.split("/")[2]
 
             # Check to see if this user has permission to view this dataset
-            if username is None:
-                return empty_data, empty_columns, [], [], [], [], None
-            elif not self.glam_db.user_can_access_dataset(dataset_id, username):
+            if not self.glam_db.user_can_access_dataset(dataset_id, username):
                 return empty_data, empty_columns, [], [], [], [], None
 
             # Get the base path to the dataset
