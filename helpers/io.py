@@ -277,7 +277,14 @@ class GLAM_IO:
         
         assert df is not None, "No data object was found"
 
-        return df.set_index("CAG")
+        # Add the wald and absolute wald, also set the index
+        return df.assign(
+            wald=df["estimate"] / df["std_error"]
+        ).assign(
+            abs_wald=lambda d: d["wald"].abs()
+        ).set_index(
+            "CAG"
+        )
 
     def get_enrichment_list(self, base_path, parameter_name):
         return [
