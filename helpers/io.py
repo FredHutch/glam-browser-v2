@@ -434,6 +434,8 @@ class GLAM_IO:
         return self.read_item(
             base_path,
             f"genome_details/{genome_id}.feather"
+        ).sort_values(
+            by=["contig", "contig_start"]
         )
 
     def get_genomes_with_details(self, base_path):
