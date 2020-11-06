@@ -277,14 +277,18 @@ class GLAM_IO:
         
         assert df is not None, "No data object was found"
 
-        # Add the wald and absolute wald, also set the index
-        return df.assign(
-            wald=df["estimate"] / df["std_error"]
-        ).assign(
-            abs_wald=lambda d: d["wald"].abs()
-        ).set_index(
-            "CAG"
-        )
+        # Add the wald and absolute wald
+        if "wald" not in df.columns.values:
+            df = df.assign(
+                wald = df["estimate"] / df["std_error"]
+            )
+        if "abs_wald" not in df.columns.values:
+            df = df.assign(
+                abs_wald = df["wald"].abs()
+            )
+
+        # Set the index and return
+        return df.set_index("CAG")
 
     def get_enrichment_list(self, base_path, parameter_name):
         return [
@@ -305,6 +309,16 @@ class GLAM_IO:
         if df is None:
             return None
 
+        if "wald" not in df.columns.values:
+            df = df.assign(
+                wald = df["estimate"] / df["std_error"]
+            )
+        if "abs_wald" not in df.columns.values:
+            df = df.assign(
+                abs_wald = df["wald"].abs()
+            )
+
+        # Set the index and return
         return df.set_index("label")
 
     def get_cag_taxa(self, base_path, cag_id, taxa_rank):
