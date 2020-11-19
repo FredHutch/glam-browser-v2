@@ -2,14 +2,18 @@
 
 import argparse
 from collections import defaultdict
+from copy import deepcopy
+from fastcluster import linkage
 from functools import lru_cache
 import logging
+import math
 import networkx as nx
+import numpy as np
 import os
 import pandas as pd
-import numpy as np
+from scipy.cluster.hierarchy import cophenet, optimal_leaf_ordering
+from scipy.spatial.distance import squareform, euclidean, pdist
 from time import time
-from copy import deepcopy
 
 
 def glam_network(
@@ -17,21 +21,30 @@ def glam_network(
     detail_hdf,
     output_folder,
     output_prefix,
+    cache=None,
+    metric="euclidean",
+    method="average",
     aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
     region=os.environ.get("AWS_REGION", "us-west-2"),
-    min_node_size=10
+    min_node_size=10,
+    testing=False,
 ):
     """Use co-abundance and co-assembly to render genes in a network layout."""
 
     # 1 - Build a set of gene membership for all contigs
-    contig_gene_sets = build_contig_dict(summary_hdf, detail_hdf, remove_edge=False)
+    contig_gene_sets = build_contig_dict(
+        summary_hdf, 
+        detail_hdf, 
+        cache=cache,
+        testing=testing,
+    )
 
     # 2 - Combine contigs which satisfy a conservative overlap threshold
     merged_contig_sets = combine_overlapping_contigs(contig_gene_sets)
 
     # 3 - Build a network of gene linkage groups
-    LN = LinkageNetwork(summary_hdf, merged_contig_sets)
+    LN = LinkageNetwork(summary_hdf, merged_contig_sets, cache=cache, testing=testing)
 
     #####################
     # PRUNE THE NETWORK #
@@ -61,7 +74,11 @@ def glam_network(
     genome_gene_sets = read_genome_gene_sets(detail_hdf)
     genome_overlap_df = count_genome_overlap(LN, genome_gene_sets)
     G = make_network(LN)
-    add_genomes_to_graph(LN, G, genome_overlap_df)
+    if len(genome_overlap_df) > 0:
+        logging.info("Adding genome data to graph")
+        add_genomes_to_graph(LN, G, genome_overlap_df)
+    else:
+        logging.info("No genome data found -- skipping")
 
     # Read the taxonomy
     tax = Taxonomy(summary_hdf)
@@ -76,14 +93,21 @@ def glam_network(
     # Summarize each linkage group on the basis of abundance
     ln_abund_df = get_linkage_group_abundances(LN, detail_hdf)
 
+    # Make sure that the output folder exists
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
     # The path for output files will vary only by suffix
     output_path = lambda suffix: os.path.join(output_folder, f"{output_prefix}.{suffix}")
 
     # Write out the graph in graphml format
     nx.write_graphml(G, output_path("graphml"))
 
+    # Write out the graph also in tabular format
+    reformat_graphml(G, output_path("graph"))
+
     # Write out the taxonomic spectrum for each subnetwork
-    tax_spectrum_df.T.reset_index().to_feather(output_path("feather"))
+    tax_spectrum_df.T.reset_index().to_feather(output_path("taxSpectrum.feather"))
 
     # Write out the table of which genes are part of which linkage group
     pd.DataFrame([
@@ -111,8 +135,52 @@ def glam_network(
 
     # Write out the table of relative abundances for each linkage group
     ln_abund_df.reset_index().to_feather(
-        "2020-11-12-linkage-group-abundance.feather"
+        output_path("linkage-group-abundance.feather")
     )
+
+    # Write out the coordinates to plot each linkage group
+    linkage_partition(
+        output_path(f"{metric}.{method}.coords.feather"),
+        output_path("taxSpectrum.feather"),
+        output_path("linkage-group-gene-index.feather"),
+        output_path("subnetworks.feather"),
+        output_path("graphml"),
+        method=method,
+        metric=metric,
+    )
+
+
+def cache_fp(cache, prefix, key):
+    """Format the path to a feather file in the cache."""
+    assert cache is not None
+    assert os.path.exists(cache)
+
+    # Construct the path to the file directly
+    return os.path.join(cache, f"{prefix}.{key.replace('/', '.')}")
+
+
+def read_cache(cache, prefix, key):
+    """Read from a file in the cache."""
+    # Format the path
+    fp = cache_fp(cache, prefix, key)
+
+    # If the file does not exist
+    if not os.path.exists(fp):
+        return None
+    
+    # Otherwise, read the file
+    logging.info(f"Reading from the cache: {fp}")
+    return pd.read_feather(fp)
+
+
+def write_cache(df, cache, prefix, key):
+    """Write to a file in the cache."""
+
+    # Format the path
+    fp = cache_fp(cache, prefix, key)
+    logging.info(f"Writing to the cache: {fp}")
+    return df.to_feather(fp)
+
 
 @lru_cache(maxsize=1)
 def assembly_key_list(detail_hdf):
@@ -132,22 +200,51 @@ def get_cag_size(summary_hdf):
 
 
 @lru_cache(maxsize=1)
-def read_cag_dict(summary_hdf):
+def read_cag_dict(summary_hdf, cache=None):
     """Get the dict matching each gene to a CAG."""
-    return pd.read_hdf(
+    logging.info("Reading the assignment of genes to CAGs")
+
+    # Check the cache
+    if cache is not None:
+
+        # Try to read the file
+        df = read_cache(cache, "read_cag_dict", "output")
+        if df is not None:
+            return df.set_index(
+                "gene"
+            )["CAG"]
+
+    df = pd.read_hdf(
         summary_hdf,
-        "/annot/gene/all",
-        columns=["gene", "CAG"]
-    ).set_index(
+        "/annot/gene/cag",
+    )
+
+    if cache is not None:
+        write_cache(df, cache, "read_cag_dict", "output")
+
+    return df.set_index(
         "gene"
     )["CAG"]
 
 
 @lru_cache()
-def read_contig_info(summary_hdf, detail_hdf, path_name, remove_edge=True):
+def read_contig_info(summary_hdf, detail_hdf, path_name, remove_edge=True, cache=None):
     """Read the contig information for a single assembly."""
+
+    # Check the cache
+    if cache is not None:
+
+        # Try to read the file
+        df = read_cache(cache, "read_contig_info", path_name)
+
+        # If there was data in the cache
+        if df is not None:
+            return df
+
+        # Otherwise, compute the data
+
     # Read the table
-    print(f"Reading {path_name}")
+    logging.info(f"Reading {path_name}")
     with pd.HDFStore(detail_hdf, 'r') as store:
         df = pd.read_hdf(store, path_name)
 
@@ -155,7 +252,7 @@ def read_contig_info(summary_hdf, detail_hdf, path_name, remove_edge=True):
     df = df.loc[df["catalog_gene"].isnull().apply(lambda v: v is False)]
 
     # Remove genes which don't have a CAG assigned
-    cag_dict = read_cag_dict(summary_hdf)
+    cag_dict = read_cag_dict(summary_hdf, cache=cache)
     df = df.loc[df["catalog_gene"].apply(
         cag_dict.get).isnull().apply(lambda v: v is False)]
 
@@ -168,7 +265,15 @@ def read_contig_info(summary_hdf, detail_hdf, path_name, remove_edge=True):
     # Add the specimen name to the contig name
     df = df.assign(
         contig=df["contig"] + "_" + df["specimen"]
+    ).reset_index(
+        drop=True
     )
+
+    # If the cache folder has been specified
+    if cache is not None:
+
+        # Write to the cache
+        write_cache(df, cache, "read_contig_info", path_name)
 
     return df
 
@@ -212,7 +317,14 @@ def read_genome_info(summary_hdf, path_name):
     )
 
 
-def build_contig_dict(summary_hdf, detail_hdf, remove_edge=True, min_genes=2):
+def build_contig_dict(
+    summary_hdf, 
+    detail_hdf, 
+    remove_edge=False, 
+    min_genes=2, 
+    cache=None,
+    testing=False,
+):
     """Read in a set with the membership of the genes in every contig."""
 
     # Set up a dict, keyed by contig
@@ -226,13 +338,15 @@ def build_contig_dict(summary_hdf, detail_hdf, remove_edge=True, min_genes=2):
             summary_hdf,
             detail_hdf,
             path_name,
-            remove_edge=remove_edge
+            remove_edge=remove_edge,
+            cache=cache,
         )
 
         # Iterate over every contig
-        print(
+        logging.info(
             f"Adding {contig_df.shape[0]:,} genes across {contig_df['contig'].unique().shape[0]:,} contigs from {path_name.split('/')[-1]}")
         start_time = time()
+        i = 0
         for contig_name, contig_genes in contig_df.groupby("contig"):
 
             # Skip contigs with less than `min_genes` genes
@@ -242,10 +356,15 @@ def build_contig_dict(summary_hdf, detail_hdf, remove_edge=True, min_genes=2):
                 contig_membership[contig_name] = set(
                     contig_genes["catalog_gene"].tolist())
 
-        print(f"Done - {round(time() - start_time, 1):,} seconds elapsed")
+            i += 1
+            if testing and i == 10:
+                logging.info("TESTING -- STOPPING EARLY")
+                break
+
+        logging.info(f"Done - {round(time() - start_time, 1):,} seconds elapsed")
         start_time = time()
 
-    print(f"Returning {len(contig_membership):,} sets of gene membership")
+    logging.info(f"Returning {len(contig_membership):,} sets of gene membership")
 
     return contig_membership
 
@@ -256,7 +375,7 @@ def index_contig_gene_sets(contig_gene_sets):
     for contig_name, gene_set in contig_gene_sets.items():
         for gene_name in list(gene_set):
             gene_index[gene_name].add(contig_name)
-    print(
+    logging.info(
         f"Made index for {len(contig_gene_sets):,} contigs and {len(gene_index):,} genes -- {round(time() - start_time, 1):,} seconds")
     return gene_index
 
@@ -314,7 +433,7 @@ def index_contig_gene_sets(contig_gene_sets):
 #     ]).assign(
 #         match_prop=lambda df: df["match_n"].fillna(0) / df["contig_size"]
 #     )
-#     print(
+#     logging.info(
 #         f"Made membership table -- {round(time() - start_time, 1):,} seconds"
 #     )
     
@@ -373,11 +492,11 @@ def combine_overlapping_contigs(contig_gene_sets, min_overlap_prop=0.75, max_mis
                     # Don't check contigA against any additional contigs
                     break
 
-        print(
+        logging.info(
             f"Merged {found_overlap:,} contigs -- {round(time() - start_time, 1):,} seconds")
 
     # Return the final set of merged contigs
-    print(f"Returning a set of {len(merged_contig_sets):,} contigs")
+    logging.info(f"Returning a set of {len(merged_contig_sets):,} contigs")
     return merged_contig_sets
 
 
@@ -399,13 +518,13 @@ def find_linkage_groups(merged_contig_sets):
         # Add to the linkage group
         linkage_groups[lg_name].add(gene_name)
 
-    print(f"Found {len(linkage_groups):,} linkage groups")
+    logging.info(f"Found {len(linkage_groups):,} linkage groups")
     return linkage_groups
 
 
 class LinkageNetwork:
 
-    def __init__(self, summary_hdf, merged_contig_sets, max_cag_size=10000):
+    def __init__(self, summary_hdf, merged_contig_sets, max_cag_size=10000, cache=None, testing=False):
 
         # The data we will track in this object are:
 
@@ -417,7 +536,7 @@ class LinkageNetwork:
         self.group_contigs = defaultdict(set)
 
         # As part of building the linkage groups, we need to know the CAG assignment for each gene
-        cag_dict = read_cag_dict(summary_hdf)
+        cag_dict = read_cag_dict(summary_hdf, cache=cache)
 
         # We will also need to know how large each CAG is
         cag_size = cag_dict.value_counts()
@@ -495,10 +614,11 @@ class LinkageNetwork:
                     for contig_name in contig_list.split(" - "):
                         self.groups_with_contig[contig_name].add(lg_name)
 
-        print(
+        logging.info(
             f"Added genes from contigs to create a network with {len(self.group_genes):,} linkage groups and {sum(map(len, self.group_genes.values())):,} genes")
 
         # Now we need to add LGs which contain genes that do not align to any contigs
+        i = 0
         for gene_name, cag_id in cag_dict.items():
 
             # If the gene has not yet been grouped
@@ -530,7 +650,13 @@ class LinkageNetwork:
 
                     self.groups_with_cag[cag_dict.loc[gene_name]].add(lg_name)
 
-        print(
+                    # Increment the counter
+                    i += 1
+                    if testing and i == 100:
+                        logging.info("TESTING -- STOPPING EARLY")
+                        break
+
+        logging.info(
             f"Created a network with {len(self.group_genes):,} linkage groups and {sum(map(len, self.group_genes.values())):,} genes")
 
         # Cache the group size and number of connections
@@ -656,7 +782,7 @@ def merge_nodes_by_ratio(
     more information-dense neighbors.
     """
 
-    print(
+    logging.info(
         f"Merging nodes which fall under the connectivity ratio of 10^{max_ratio}")
 
     # Make a table with the number of genes, and the number of connections, for all groups
@@ -666,7 +792,7 @@ def merge_nodes_by_ratio(
     summary_df = summary_df.query(
         f"connection_size_ratio_log10 <= {max_ratio}"
     )
-    print(f"Screening a batch of {summary_df.shape[0]:,} groups")
+    logging.info(f"Screening a batch of {summary_df.shape[0]:,} groups")
 
     # Keep track of how many groups were trimmed
     ntrimmed = 0
@@ -724,11 +850,11 @@ def merge_nodes_by_ratio(
         ntrimmed += 1
 
         if ntrimmed % 10000 == 0:
-            print(f"Trimmed {ntrimmed:,} groups")
+            logging.info(f"Trimmed {ntrimmed:,} groups")
 
     # Get the vector of group sizes
     vc = LN.group_sizes()
-    print(
+    logging.info(
         f"Trimmed {ntrimmed:,} groups, resulting in {vc.shape[0]:,} groups for {vc.sum():,} genes"
     )
 
@@ -739,7 +865,7 @@ def merge_terminal_nodes(
 ):
     """Merge nodes which are terminal (have only 1 non-self connection)."""
 
-    print(f"Merging terminal nodes smaller than {max_size}")
+    logging.info(f"Merging terminal nodes smaller than {max_size}")
 
     # Keep track of how many groups were trimmed
     ntrimmed = 1
@@ -791,7 +917,7 @@ def merge_terminal_nodes(
 
         # Get the vector of group sizes
         vc = LN.group_sizes()
-        print(
+        logging.info(
             f"Merged {ntrimmed:,} groups, resulting in {vc.shape[0]:,} groups for {vc.sum():,} genes"
         )
 
@@ -801,7 +927,7 @@ def remove_unconnected_nodes(
 ):
     """Remove all unconnected nodes which container fewer than this number of genes."""
 
-    print(f"Removing unconnected nodes smaller than {max_size_unconnected}")
+    logging.info(f"Removing unconnected nodes smaller than {max_size_unconnected}")
 
     # Make a table with the number of genes, and the number of connections, for all groups
     summary_df = group_summary_table(LN)
@@ -824,7 +950,7 @@ def remove_unconnected_nodes(
 
     # Get the vector of group sizes
     vc = LN.group_sizes()
-    print(
+    logging.info(
         f"Trimmed {ntrimmed:,} groups, resulting in {vc.shape[0]:,} groups for {vc.sum():,} genes")
 
 
@@ -832,7 +958,7 @@ def read_genome_gene_sets(summary_hdf):
 
     # Iterate over every genome in the HDF
     static_genome_key_list = genome_key_list(summary_hdf)
-    print(
+    logging.info(
         f"Preparing to read data for {len(static_genome_key_list):,} genomes")
 
     # Format the output as a dict of sets
@@ -851,7 +977,7 @@ def read_genome_gene_sets(summary_hdf):
             # Add the genes for this genome
             output[genome_id] = set(pd.read_hdf(store, key)["gene"].tolist())
 
-    print(f"Read in data for {len(output):,} genomes")
+    logging.info(f"Read in data for {len(output):,} genomes")
     return output
 
 
@@ -897,7 +1023,7 @@ def make_network(
     LN
 ):
 
-    print(f"Building a network with {len(LN.group_genes):,} linkage groups")
+    logging.info(f"Building a network with {len(LN.group_genes):,} linkage groups")
 
     # Set up the graph
     G = nx.Graph()
@@ -917,7 +1043,7 @@ def make_network(
         for group_b in LN.connections(group_a)
         if group_a < group_b
     ])
-    print("Done")
+    logging.info("Done")
 
     return G
 
@@ -935,7 +1061,7 @@ def add_genomes_to_graph(
     )
     n_genomes = filtered_genome_df["genome"].unique().shape[0]
 
-    print(f"Adding {n_genomes:,} genomes to the graph")
+    logging.info(f"Adding {n_genomes:,} genomes to the graph")
 
     # Add the genomes
     G.add_nodes_from([
@@ -960,7 +1086,7 @@ def add_genomes_to_graph(
         )
         for _, r in filtered_genome_df.iterrows()
     ])
-    print("Done")
+    logging.info("Done")
 
 
 class Taxonomy:
@@ -1029,7 +1155,7 @@ def make_tax_spectrum_df(LN, G, taxonomy_df, tax):
     for node_set in nx.connected_components(G):
 
         # Link the taxon spectrum to the largest group of genes in this set of nodes
-        largest_name = largest_node(node_set)
+        largest_name = largest_node(node_set, LN)
         node_groupings[largest_name] = list(node_set)
         node_size[largest_name] = len(node_set)
 
@@ -1042,13 +1168,13 @@ def make_tax_spectrum_df(LN, G, taxonomy_df, tax):
         )
 
         if len(tax_spectrum_df) % 2000 == 0:
-            print(f"Found taxa for {len(tax_spectrum_df)} connected groups")
+            logging.info(f"Found taxa for {len(tax_spectrum_df)} connected groups")
 
     # Format as a DataFrame
     node_size = pd.Series(node_size)
     tax_spectrum_df = pd.DataFrame(tax_spectrum_df).fillna(0)
     assert node_size.shape[0] == tax_spectrum_df.shape[1]
-    print(
+    logging.info(
         f"Found {tax_spectrum_df.shape[0]:,} taxa for {tax_spectrum_df.shape[1]:,} connected groups")
 
     return tax_spectrum_df, node_groupings
@@ -1088,7 +1214,7 @@ def get_tax_spectra(node_set, LN, taxonomy_df, tax):
     return tax_counts
 
 
-def largest_node(node_set):
+def largest_node(node_set, LN):
     """Find the node which contains the most genes in a set of nodes."""
     max_size = None
     max_label = None
@@ -1180,16 +1306,414 @@ def get_linkage_group_abundances(LN, detail_hdf):
             ).sum()["abund"]  # Calculate the aggregate abundance per group
 
             if len(abund_dict) % 10 == 0:
-                print(
+                logging.info(
                     f"Computed relative abundance of linkage groups across {len(abund_dict):,} specimens")
 
-    print(
+    logging.info(
         f"Computed relative abundance of linkage groups across {len(abund_dict):,} specimens"
     )
 
     # Make a DataFrame
     return pd.DataFrame(abund_dict).fillna(0)
 
+
+def reformat_graphml(G, output_prefix):
+    """Reformat the data from the graph object as feather tables."""
+    
+    # Make a table of edges
+    edge_df = pd.DataFrame([
+        {
+            "from": edge[0],
+            "to": edge[1]
+        }
+        for edge in G.edges
+    ])
+
+    # Save to a file
+    edge_df.to_feather(
+        f"{output_prefix}.edges.feather"
+    )
+
+    # Make a node table
+    node_df = pd.DataFrame([
+        {
+            "linkage_group": node_name,
+            **node_attrs
+        }
+        for node_name, node_attrs in G.nodes.items()
+    ])
+
+    # Save to a file
+    node_df.to_feather(
+        f"{output_prefix}.nodes.feather"
+    )
+
+
+def expand_subnetworks(subnetworks_fp, graphml_fp, coords, q=0.25):
+    """Given a set of coordinates, expand to include the members of each subnetwork."""
+
+    # Find the median (if q=0.5) distance to the nearest neighbor for each
+    median_nearest_neighbor = np.quantile(
+        [
+            np.delete(r, i).min()
+            for i, r in enumerate(
+                squareform(
+                    pdist(
+                        coords,
+                        metric="euclidean"
+                    )
+                )
+            )
+        ],
+        q
+    )
+
+    # Get the list of nodes that are contained in each subnetwork
+    subnetwork_members = {
+        n: set(d['linkage_group'].tolist())
+        for n, d in pd.read_feather(
+            subnetworks_fp
+        ).groupby(
+            "subnetwork"
+        )
+    }
+    print(f"Read in {sum(map(len, subnetwork_members.values())):,} linkage groups in {len(subnetwork_members):,} subnetworks")
+
+    # Read in the graph structure of the subnetworks
+    G = nx.read_graphml(graphml_fp)
+    print(f"Read in network layout for {len(G.nodes):,} linkage groups")
+
+    # Expand each subnetwork using that value as the maximum size in either dimension
+    return pd.concat(
+        [
+            expand_single_subnetwork(
+                lg_name_list,
+                G,
+                coords.loc[n],
+                median_nearest_neighbor,
+            )
+            for n, lg_name_list in subnetwork_members.items()
+            if n in coords.index.values
+        ]
+    )
+
+
+def expand_single_subnetwork(lg_name_list, G, tsne_coords, final_size):
+    # Get the coordinate column names
+    col_names = tsne_coords.index.values
+
+    # If there is just a single linkage group in this subnetwork
+    if len(lg_name_list) == 1:
+        return pd.DataFrame([{
+            "linkage_group": list(lg_name_list)[0],
+            col_names[0]: tsne_coords[0],
+            col_names[1]: tsne_coords[1],
+        }])
+
+    # Otherwise, this subnetwork contains multiple linkage groups
+
+    # Get the subnetwork containing these genes
+    H = G.subgraph(
+        n for n in G.nodes
+        if n in lg_name_list
+    )
+
+    # Get the positions for these nodes
+    pos = pd.DataFrame(
+        nx.spring_layout(H),
+        index=col_names
+    ).T
+
+    # Scale both axes to range from -`final_size` to +`final_size`
+    pos = pos - pos.min()
+    pos = (2 * final_size * pos / pos.max()) - final_size
+
+    # Now move the entire frame of reference to the indicated coordinates
+    pos = pos + tsne_coords
+
+    # Make the column names conform
+    return pos.reset_index(
+    ).rename(
+        columns={
+            "index": "linkage_group",
+        }
+    )
+
+
+@lru_cache(maxsize=1)
+def subnetwork_size(gene_index_fp, subnetworks_fp):
+    # Get the number of genes per linkage group
+    lg_size = pd.read_feather(
+        gene_index_fp
+    ).groupby(
+        "linkage_group"
+    ).apply(
+        len
+    )
+
+    # Get the grouping of linkage groups into subnetworks
+    return pd.read_feather(
+        subnetworks_fp
+    ).assign(
+        n_genes=lambda d: d["linkage_group"].apply(lg_size.get)
+    ).groupby(
+        "subnetwork"
+    ).apply(
+        lambda d: d["n_genes"].sum()
+    )
+
+
+@lru_cache(maxsize=16)
+def taxonomic_linkage_clustering(
+    tax_spectra_fp,
+    method="average",
+    metric="euclidean",
+):
+
+    # Read in the table with taxonomic spectra per subnetwork
+    tax_spectra_df = pd.read_feather(
+        tax_spectra_fp
+    ).set_index(
+        "index"
+    )
+
+    # Perform linkage clustering
+    Z = linkage(
+        tax_spectra_df,
+        method=method,
+        metric=metric,
+    )
+
+    # Compute the optimal leaf ordering
+    Z = optimal_leaf_ordering(
+        Z,
+        tax_spectra_df,
+        metric
+    )
+
+    # Return the linkage groups, as well as the labels
+    return Z, tax_spectra_df.index.values
+
+
+class Partition:
+
+    def __init__(
+        self, 
+        name,
+        size,
+        theta_min=0, 
+        theta_max=2*np.pi, 
+        radius=0, 
+        is_leaf=False
+    ):
+        self.name = name
+        self.size = size
+        self.theta_min = theta_min
+        self.theta_max = theta_max
+        self.radius = radius
+        self.is_leaf = is_leaf
+        
+    def show(self):
+        print(json.dumps({
+            k: str(self.__getattribute__(k))
+            for k in dir(self)
+            if not (k.startswith("__") or callable(self.__getattribute__(k)))
+        }, indent=4))
+        
+    def split(self, childA, childB, radius_delta):
+        """Split a node, weighted by child size."""
+        # Make sure that the child size adds up to the node size
+        assert childA['size'] + childB['size'] == self.size, (childA['size'], childB['size'], self.size)
+        assert childA['size'] > 0
+        assert childB['size'] > 0
+        
+        # Get the arc length of the parent
+        theta_range = self.theta_max - self.theta_min
+        
+        # Compute the proportion of that arc which is assigned to each child
+        thetaA = theta_range * childA['size'] / self.size
+        thetaB = theta_range * childB['size'] / self.size
+        
+        nodeA = Partition(
+            childA['name'],
+            childA['size'],
+            theta_min = self.theta_min,
+            theta_max = self.theta_min + thetaA,
+            radius = self.radius + radius_delta,
+            is_leaf = childA['is_leaf']
+        )
+
+        nodeB = Partition(
+            childB['name'],
+            childB['size'],
+            theta_min = self.theta_max - thetaB,
+            theta_max = self.theta_max,
+            radius = self.radius + radius_delta,
+            is_leaf = childB['is_leaf']
+        )
+
+        return nodeA, nodeB
+    
+    def pos(self):
+        """Calculate the position of the node in cartesian coordinates."""
+        theta = np.mean([self.theta_min, self.theta_max])
+        
+        return {
+            "name": self.name,
+            "x": self.radius * math.cos(theta),
+            "y": self.radius * math.sin(theta),
+        }
+    
+        
+class PartitionMap:
+    
+    def __init__(self, Z, leaf_names, size_dict):
+        """Input is a linkage matrix, and a list of the names of all leaves"""
+        
+        # Save the dictionary with the number of genes in each subnetwork
+        self.size_dict = size_dict
+        
+        # Make a DataFrame with the nodes which were joined at each iteration
+        Z = pd.DataFrame(
+            Z,
+            columns = ["childA", "childB", "distance", "size"]
+        ).assign(
+            node_ix = np.arange(leaf_names.shape[0], leaf_names.shape[0] + Z.shape[0])
+        ).apply(
+            lambda c: c.apply(int if c.name != 'distance' else float)
+        ).set_index(
+            "node_ix"
+        )
+        
+        # Use the number of genes per subnetwork to update the size of each node
+        for node_ix, r in Z.iterrows():
+            
+            if r.childA < leaf_names.shape[0]:
+                childA_size = size_dict[leaf_names[int(r.childA)]]
+            else:
+                childA_size = Z.loc[int(r.childA), 'size']
+
+            if r.childB < leaf_names.shape[0]:
+                childB_size = size_dict[leaf_names[int(r.childB)]]
+            else:
+                childB_size = Z.loc[int(r.childB), 'size']
+                
+            # Update the table
+            Z.loc[node_ix, 'size'] = childA_size + childB_size
+        
+        # Reverse the order
+        Z = Z[::-1]
+        
+        # Create the map, assigning the entire range to the final node which was created
+        self.partition_map = {
+            Z.index.values[0]: Partition(Z.index.values[0], Z['size'].values[0])
+        }
+        
+        # Save the entire linkage matrix
+        self.Z = Z
+        
+        # Save the leaf names
+        self.leaf_names = leaf_names
+        
+        # Expand each node in turn
+        for parent_node_ix, r in Z.iterrows():
+            self.add_children(parent_node_ix, r)
+            
+    def annotate(self, node_ix):
+        
+        node_ix = int(node_ix)
+        
+        # Node is a leaf
+        if node_ix < self.leaf_names.shape[0]:
+            return {
+                "size": self.size_dict[self.leaf_names[node_ix]],
+                "name": self.leaf_names[node_ix],
+                "is_leaf": True
+            }
+        # Node is internal
+        else:
+            return {
+                "size": self.Z.loc[node_ix, "size"],
+                "name": node_ix,
+                "is_leaf": False
+            }
+            
+        
+    def add_children(self, parent_node_ix, r):
+        
+        # Make sure that the parent node has a partition assigned
+        assert parent_node_ix in self.partition_map
+        
+        # Check if both children are leaves
+        # If they are not leaves, then their size is encoded in the linkage matrix
+        childA = self.annotate(r.childA)
+        childB = self.annotate(r.childB)
+        
+        # Split the parent node, weighted by size
+        nodeA, nodeB = self.partition_map[
+            parent_node_ix
+        ].split(
+            childA,
+            childB,
+            r.distance
+        )
+        
+        self.partition_map[childA['name']] = nodeA
+        self.partition_map[childB['name']] = nodeB
+        
+    def get_coords(self):
+        """Return the x-y coordinates of all leaf nodes."""
+        
+        return pd.DataFrame(
+            [
+                node.pos()
+                for node_name, node in self.partition_map.items()
+                if node.is_leaf
+            ]
+        ).set_index(
+            "name"
+        )
+
+
+def linkage_partition(
+    output_fp, 
+    tax_spectra_fp,
+    gene_index_fp, 
+    subnetworks_fp,
+    graphml_fp,
+    method="average",
+    metric="euclidean",
+):
+    
+    # Get the linkage clustering based on taxonomic assignments
+    Z, Z_index = taxonomic_linkage_clustering(
+        tax_spectra_fp,
+        method=method,
+        metric=metric
+    )
+    
+    # Get the sizes of each subnetwork
+    size_dict = subnetwork_size(
+        gene_index_fp, 
+        subnetworks_fp,
+    )
+
+    # Use that linkage matrix to build a set of coordinates
+    pm = PartitionMap(Z, Z_index, size_dict)
+    coords = pm.get_coords()
+    
+    # Replace each subnetwork with its members
+    df = expand_subnetworks(
+        subnetworks_fp, 
+        graphml_fp,
+        coords,
+    ).reset_index(
+        drop=True
+    )
+    
+    # Save in feather format
+    df.to_feather(output_fp)
+    print(f"Wrote out to {output_fp}")
 
 if __name__ == "__main__":
 
@@ -1243,6 +1767,33 @@ if __name__ == "__main__":
         help="Prefix for all output files"
     )
 
+    parser.add_argument(
+        "--cache",
+        default=None,
+        type=str,
+        help="If specified, cache intermediate files in this folder"
+    )
+
+    parser.add_argument(
+        "--method",
+        default="average",
+        type=str,
+        help="Linkage clustering method"
+    )
+
+    parser.add_argument(
+        "--metric",
+        default="euclidean",
+        type=str,
+        help="Linkage clustering distance metric"
+    )
+
+    parser.add_argument(
+        "--testing",
+        action="store_true",
+        help="If specified, use a random subset of the data for testing purposes"
+    )
+
     # Parse the arguments
     args = parser.parse_args()
 
@@ -1250,11 +1801,27 @@ if __name__ == "__main__":
     for fp in [args.summary_hdf, args.detail_hdf]:
         assert os.path.exists(fp), f"Cannot find {fp}"
 
+    # If a cache folder has been specified
+    if args.cache is not None:
+
+        # If the folder does not exist
+        if not os.path.exists(args.cache):
+
+            # Make the folder
+            logging.info(f"Creating cache folder {args.cache}")
+            os.makedirs(args.cache)
+
+        logging.info(f"Using cache folder {args.cache}")
+
     glam_network(
         args.summary_hdf,
         args.detail_hdf,
         args.output_folder,
         args.output_prefix,
+        cache=args.cache,
+        method=args.method,
+        metric=args.metric,
+        testing=args.testing,
         aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
         region=os.environ.get("AWS_REGION", "us-west-2"),
