@@ -72,8 +72,13 @@ def glam_network(
 
     # Read in the genome information
     genome_gene_sets = read_genome_gene_sets(detail_hdf)
+    
     genome_overlap_df = count_genome_overlap(LN, genome_gene_sets)
+    
     G = make_network(LN)
+
+    assert len(G.nodes) > 0, "No linkage groups found, stopping"
+    
     if len(genome_overlap_df) > 0:
         logging.info("Adding genome data to graph")
         add_genomes_to_graph(LN, G, genome_overlap_df)
@@ -81,7 +86,7 @@ def glam_network(
         logging.info("No genome data found -- skipping")
 
     # Read the taxonomy
-    tax = Taxonomy(summary_hdf)
+    tax = Taxonomy(summary_hdf, cache=cache)
 
     # Read the taxonomic assignment per gene
     taxonomy_df = read_taxonomy_df(summary_hdf)
@@ -357,7 +362,7 @@ def build_contig_dict(
                     contig_genes["catalog_gene"].tolist())
 
             i += 1
-            if testing and i == 10:
+            if testing and i == 100:
                 logging.info("TESTING -- STOPPING EARLY")
                 break
 
@@ -1091,14 +1096,37 @@ def add_genomes_to_graph(
 
 class Taxonomy:
 
-    def __init__(self, summary_hdf):
+    def __init__(self, summary_hdf, cache=None):
         """Read the taxonomy structure."""
-        self.tax = pd.read_hdf(summary_hdf, "/ref/taxonomy").set_index(
-            "tax_id"
-        ).apply(
-            lambda c: c.apply(lambda v: 'none' if pd.isnull(
-                v) else str(int(float(v)))) if c.name == 'parent' else c
-        )
+
+        df = None
+        if cache is not None:
+            # Try to read the file
+            df = read_cache(cache, "taxonomy", "table")
+
+        # If there was data in the cache
+        if df is not None:
+            self.tax = df
+
+        else:
+
+            df = pd.read_hdf(summary_hdf, "/ref/taxonomy").set_index(
+                "tax_id"
+            ).apply(
+                lambda c: c.apply(lambda v: 'none' if pd.isnull(
+                    v) else str(int(float(v)))) if c.name == 'parent' else c
+            ).reset_index(
+                drop=True
+            )
+
+            # If the cache folder has been specified
+            if cache is not None:
+
+                # Write to the cache
+                write_cache(df, cache, "taxonomy", "table")
+
+        # Save to the object
+        self.tax = df
 
     @lru_cache(maxsize=None)
     def path_to_root(self, tax_id):
@@ -1330,7 +1358,9 @@ def reformat_graphml(G, output_prefix):
     ])
 
     # Save to a file
-    edge_df.to_feather(
+    edge_df.reset_index(
+        drop=True
+    ).to_feather(
         f"{output_prefix}.edges.feather"
     )
 
@@ -1344,7 +1374,9 @@ def reformat_graphml(G, output_prefix):
     ])
 
     # Save to a file
-    node_df.to_feather(
+    node_df.reset_index(
+        drop=True
+    ).to_feather(
         f"{output_prefix}.nodes.feather"
     )
 
