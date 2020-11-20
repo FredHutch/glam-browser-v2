@@ -5,6 +5,7 @@ from collections import defaultdict
 from copy import deepcopy
 from fastcluster import linkage
 from functools import lru_cache
+import json
 import logging
 import math
 import networkx as nx
@@ -31,6 +32,9 @@ def glam_network(
     testing=False,
 ):
     """Use co-abundance and co-assembly to render genes in a network layout."""
+
+    if testing:
+        logging.info("RUNNING IN TESTING MODE")
 
     # 1 - Build a set of gene membership for all contigs
     contig_gene_sets = build_contig_dict(
@@ -100,21 +104,27 @@ def glam_network(
 
     # Make sure that the output folder exists
     if not os.path.exists(output_folder):
+        logging.info(f"Creating folder {output_folder}")
         os.makedirs(output_folder)
+    logging.info(f"Writing output to folder {output_folder}")
 
     # The path for output files will vary only by suffix
     output_path = lambda suffix: os.path.join(output_folder, f"{output_prefix}.{suffix}")
 
     # Write out the graph in graphml format
+    logging.info("Writing out graph object as graphml")
     nx.write_graphml(G, output_path("graphml"))
 
     # Write out the graph also in tabular format
+    logging.info("Writing out graph object in tabular format")
     reformat_graphml(G, output_path("graph"))
 
     # Write out the taxonomic spectrum for each subnetwork
+    logging.info("Writing out taxonomic spectrum")
     tax_spectrum_df.T.reset_index().to_feather(output_path("taxSpectrum.feather"))
 
     # Write out the table of which genes are part of which linkage group
+    logging.info("Writing out gene index")
     pd.DataFrame([
         {
             "gene": gene_name,
@@ -127,6 +137,7 @@ def glam_network(
     )
 
     # Write out the table of which linkage groups are connected
+    logging.info("Writing out subnetworks")
     pd.DataFrame([
         {
             "linkage_group": group_name,
@@ -139,6 +150,7 @@ def glam_network(
     )
 
     # Write out the table of relative abundances for each linkage group
+    logging.info("Writing out relative abundance of linkage groups")
     ln_abund_df.reset_index().to_feather(
         output_path("linkage-group-abundance.feather")
     )
@@ -1104,17 +1116,11 @@ class Taxonomy:
             # Try to read the file
             df = read_cache(cache, "taxonomy", "table")
 
-        # If there was data in the cache
-        if df is not None:
-            self.tax = df
+        # If there was no data in the cache
+        if df is None:
 
-        else:
-
-            df = pd.read_hdf(summary_hdf, "/ref/taxonomy").set_index(
-                "tax_id"
-            ).apply(
-                lambda c: c.apply(lambda v: 'none' if pd.isnull(
-                    v) else str(int(float(v)))) if c.name == 'parent' else c
+            df = pd.read_hdf(summary_hdf, "/ref/taxonomy").apply(
+                lambda c: c.apply(lambda v: 'none' if pd.isnull(v) else str(int(float(v)))) if c.name in ['parent', 'tax_id'] else c
             ).reset_index(
                 drop=True
             )
@@ -1126,7 +1132,7 @@ class Taxonomy:
                 write_cache(df, cache, "taxonomy", "table")
 
         # Save to the object
-        self.tax = df
+        self.tax = df.set_index("tax_id")
 
     @lru_cache(maxsize=None)
     def path_to_root(self, tax_id):
@@ -1164,6 +1170,8 @@ def read_taxonomy_df(summary_hdf):
             columns=["gene", "tax_id", "tax_name"]
         ).set_index(
             "gene"
+        ).apply(
+            lambda c: c.apply(float).apply(int).apply(str) if c.name == "tax_id" else c
         )
 
 
@@ -1201,6 +1209,7 @@ def make_tax_spectrum_df(LN, G, taxonomy_df, tax):
     # Format as a DataFrame
     node_size = pd.Series(node_size)
     tax_spectrum_df = pd.DataFrame(tax_spectrum_df).fillna(0)
+    assert tax_spectrum_df.shape[0] > 0
     assert node_size.shape[0] == tax_spectrum_df.shape[1]
     logging.info(
         f"Found {tax_spectrum_df.shape[0]:,} taxa for {tax_spectrum_df.shape[1]:,} connected groups")
@@ -1338,7 +1347,7 @@ def get_linkage_group_abundances(LN, detail_hdf):
                     f"Computed relative abundance of linkage groups across {len(abund_dict):,} specimens")
 
     logging.info(
-        f"Computed relative abundance of linkage groups across {len(abund_dict):,} specimens"
+        f"Done computing relative abundance of linkage groups across {len(abund_dict):,} specimens"
     )
 
     # Make a DataFrame
@@ -1409,11 +1418,11 @@ def expand_subnetworks(subnetworks_fp, graphml_fp, coords, q=0.25):
             "subnetwork"
         )
     }
-    print(f"Read in {sum(map(len, subnetwork_members.values())):,} linkage groups in {len(subnetwork_members):,} subnetworks")
+    logging.info(f"Read in {sum(map(len, subnetwork_members.values())):,} linkage groups in {len(subnetwork_members):,} subnetworks")
 
     # Read in the graph structure of the subnetworks
     G = nx.read_graphml(graphml_fp)
-    print(f"Read in network layout for {len(G.nodes):,} linkage groups")
+    logging.info(f"Read in network layout for {len(G.nodes):,} linkage groups")
 
     # Expand each subnetwork using that value as the maximum size in either dimension
     return pd.concat(
@@ -1718,6 +1727,7 @@ def linkage_partition(
 ):
     
     # Get the linkage clustering based on taxonomic assignments
+    logging.info("Performing linkage clustering")
     Z, Z_index = taxonomic_linkage_clustering(
         tax_spectra_fp,
         method=method,
@@ -1731,10 +1741,12 @@ def linkage_partition(
     )
 
     # Use that linkage matrix to build a set of coordinates
+    logging.info("Mapping linkage clusters to x-y coordinates")
     pm = PartitionMap(Z, Z_index, size_dict)
     coords = pm.get_coords()
     
     # Replace each subnetwork with its members
+    logging.info("Expanding subnetworks")
     df = expand_subnetworks(
         subnetworks_fp, 
         graphml_fp,
@@ -1744,8 +1756,9 @@ def linkage_partition(
     )
     
     # Save in feather format
+    logging.info("Done formatting network display")
     df.to_feather(output_fp)
-    print(f"Wrote out to {output_fp}")
+    logging.info(f"Wrote out to {output_fp}")
 
 if __name__ == "__main__":
 
