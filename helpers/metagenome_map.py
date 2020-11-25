@@ -21,7 +21,6 @@ def glam_network(
     summary_hdf,
     detail_hdf,
     output_folder,
-    output_prefix,
     metric="euclidean",
     method="average",
     aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
@@ -68,6 +67,9 @@ def glam_network(
     # Remove small unconnected nodes
     remove_unconnected_nodes(LN, max_size_unconnected=min_node_size)
 
+    # Rename the nodes ordinally, sorted by size
+    rename_nodes(LN)
+
     ############################
     # FINISHED PRUNING NETWORK #
     ############################
@@ -106,8 +108,8 @@ def glam_network(
         os.makedirs(output_folder)
     logging.info(f"Writing output to folder {output_folder}")
 
-    # The path for output files will vary only by suffix
-    output_path = lambda suffix: os.path.join(output_folder, f"{output_prefix}.{suffix}")
+    # The path for output files will all be within the output folder
+    output_path = lambda fn: os.path.join(output_folder, fn)
 
     # Write out the graph in graphml format
     logging.info("Writing out graph object as graphml")
@@ -167,7 +169,6 @@ def glam_network(
     # Annotate the linkage groups
     annotate_linkage_groups(
         output_folder,
-        output_prefix,
         summary_hdf,
     )
 
@@ -399,14 +400,14 @@ def write_out(folder, title, dat, verbose=False):
         logging.info(f"Wrote: {fpo}")
 
 
-def annotate_linkage_groups(input_folder, input_prefix, hdf_fp):
+def annotate_linkage_groups(input_folder, hdf_fp):
     """Write out all of the annotations available for each linkage group."""
 
     format_fp = lambda f: os.path.join(input_folder, f)
 
     # Skip taxonomic assignments if they are already done
     if all([
-        os.path.exists(format_fp(f"{input_prefix}/taxonomic/{tax_rank}.feather"))
+        os.path.exists(format_fp(f"taxonomic/{tax_rank}.feather"))
         for tax_rank in ["phylum", "class", "order", "family", "genus", "species"]
     ]):
         logging.info("All taxonomic labels have been computed already")
@@ -415,7 +416,7 @@ def annotate_linkage_groups(input_folder, input_prefix, hdf_fp):
 
         # Read in the table with the taxonomic assignments for genes in each linkage group
         lg_taxa = pd.read_feather(
-            format_fp(f"{input_prefix}.taxSpectrum.feather")
+            format_fp(f"taxSpectrum.feather")
         ).set_index("index")
 
         # Read in the table with the names and ranks for each taxon
@@ -424,7 +425,7 @@ def annotate_linkage_groups(input_folder, input_prefix, hdf_fp):
         # For each taxonomic level, write out the best hit for each linkage group
         for tax_rank in ["phylum", "class", "order", "family", "genus", "species"]:
             if os.path.exists(
-                format_fp(f"{input_prefix}/taxonomic/{tax_rank}.feather")
+                format_fp(f"taxonomic/{tax_rank}.feather")
             ):
 
                 logging.info(
@@ -433,7 +434,7 @@ def annotate_linkage_groups(input_folder, input_prefix, hdf_fp):
             else:
 
                 write_out(
-                    f"{input_prefix}/taxonomic/",
+                    f"taxonomic/",
                     tax_rank,
                     pick_top_taxon(lg_taxa, tax_df, tax_rank)
                 )
@@ -443,12 +444,12 @@ def annotate_linkage_groups(input_folder, input_prefix, hdf_fp):
 
     # Read in the table listing which genes are grouped into which linkage groups
     lg_membership = pd.read_feather(
-        f"{input_prefix}.linkage-group-gene-index.feather"
+        f"linkage-group-gene-index.feather"
     )
 
     # Read in the table listing the relative abundance of each linkage group in each specimen
     lg_abund = pd.read_feather(
-        f"{input_prefix}.linkage-group-abundance.feather"
+        f"linkage-group-abundance.feather"
     ).set_index(
         "index"
     )
@@ -471,7 +472,7 @@ def annotate_linkage_groups(input_folder, input_prefix, hdf_fp):
 
         # Write out the abundance vector
         write_out(
-            f"{input_prefix}/abundance/",
+            f"abundance/",
             ix,
             specimen_abund
         )
@@ -503,7 +504,7 @@ def annotate_linkage_groups(input_folder, input_prefix, hdf_fp):
 
                 # Write out the file object
                 write_out(
-                    f"{input_prefix}/abundance/",
+                    f"abundance/",
                     ix,
                     lg_abund.reindex(
                         columns=d.index.values
@@ -513,7 +514,7 @@ def annotate_linkage_groups(input_folder, input_prefix, hdf_fp):
                 )
 
     # Write out the specimen manifest
-    with open(f"{input_prefix}/abundance/index.json", "wt") as handle:
+    with open(f"abundance/index.json", "wt") as handle:
         logging.info("Writing out abundance manifest")
         json.dump(abund_manifest, handle)
 
@@ -545,7 +546,7 @@ def annotate_linkage_groups(input_folder, input_prefix, hdf_fp):
 
         # Write out the data object
         write_out(
-            f"{input_prefix}/wald/",
+            f"wald/",
             ix,
             calc_mean_wald(
                 lg_membership,
@@ -556,7 +557,7 @@ def annotate_linkage_groups(input_folder, input_prefix, hdf_fp):
         logging.info(f"Wrote out wald summary for {parameter}")
 
     # Write out the wald manifest
-    with open(f"{input_prefix}/wald/index.json", "wt") as handle:
+    with open(f"wald/index.json", "wt") as handle:
         logging.info("Writing out wald parameter manifest")
         json.dump(wald_manifest, handle)
 
@@ -1124,6 +1125,32 @@ def remove_unconnected_nodes(
         f"Trimmed {ntrimmed:,} groups, resulting in {vc.shape[0]:,} groups for {vc.sum():,} genes")
 
 
+def rename_nodes(LN):
+    """Rename nodes with integers counting up from 0."""
+
+    logging.info("Renaming linkage groups with ordinal numbers")
+
+    mapping = {
+        old_name: new_name
+        for new_name, old_name in enumerate(LN.group_sizes().index.values)
+    }
+
+    logging.info(f"Found {len(mapping):,} linkage groups to rename")
+
+    # Function will use the mapping to rename the keys of a dict
+    rename_dict_keys = lambda d: {mapping[k]: v for k, v in d.items()}
+
+    # Rename each of the componant elements of the LinkageNetwork
+    LN.group_genes = rename_dict_keys(LN.group_genes)
+    LN.group_cag = rename_dict_keys(LN.group_cag)
+    LN.group_contigs = rename_dict_keys(LN.group_contigs)
+
+    # Function will use the mapping to rename the elements of a set, 
+    # which are the values of a dict
+    rename_dict_set = lambda d: {k: set([mapping[i] for i in v]) for k, v in d.items()}
+    LN.groups_with_contig = rename_dict_set(LN.groups_with_contig)
+    LN.groups_with_cag = rename_dict_set(LN.groups_with_cag)
+
 def read_genome_gene_sets(summary_hdf):
 
     # Iterate over every genome in the HDF
@@ -1494,9 +1521,13 @@ def get_linkage_group_abundances(LN, detail_hdf):
     return pd.DataFrame(abund_dict).fillna(0)
 
 
-def reformat_graphml(G, output_prefix):
+def reformat_graphml(G, output_folder):
     """Reformat the data from the graph object as feather tables."""
     
+    if not os.path.exists(output_folder):
+        logging.info(f"Creating folder {output_folder}")
+        os.makedirs(output_folder)
+
     # Make a table of edges
     edge_df = pd.DataFrame([
         {
@@ -1510,7 +1541,7 @@ def reformat_graphml(G, output_prefix):
     edge_df.reset_index(
         drop=True
     ).to_feather(
-        f"{output_prefix}.edges.feather"
+        os.path.join(output_folder, "edges.feather")
     )
 
     # Make a node table
@@ -1526,7 +1557,7 @@ def reformat_graphml(G, output_prefix):
     node_df.reset_index(
         drop=True
     ).to_feather(
-        f"{output_prefix}.nodes.feather"
+        os.path.join(output_folder, "nodes.feather")
     )
 
 
@@ -1922,8 +1953,7 @@ if __name__ == "__main__":
         metagenome_map.py \ 
             --summary-hdf <SUMMARY_HDF> \ 
             --detail-hdf <DETAIL_HDF> \ 
-            --output-folder <OUTPUT_FOLDER> \ 
-            --output-prefix <OUTPUT_PREFIX>
+            --output-folder <OUTPUT_FOLDER>
 
         """
     )
@@ -1947,12 +1977,6 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--output-prefix",
-        type=str,
-        help="Prefix for all output files"
-    )
-
-    parser.add_argument(
         "--testing",
         action="store_true",
         help="If specified, use a random subset of the data for testing purposes"
@@ -1969,7 +1993,6 @@ if __name__ == "__main__":
         args.summary_hdf,
         args.detail_hdf,
         args.output_folder,
-        args.output_prefix,
         method='complete',
         metric='euclidean',
         testing=args.testing,
