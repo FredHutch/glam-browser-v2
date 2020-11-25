@@ -89,19 +89,6 @@ def glam_network(
     else:
         logging.info("No genome data found -- skipping")
 
-    # Read the taxonomy
-    tax = Taxonomy(summary_hdf)
-
-    # Read the taxonomic assignment per gene
-    taxonomy_df = read_taxonomy_df(summary_hdf)
-
-    # Summarize each connected set of linkage groups on the basis of taxonomic spectrum
-    # In the process, record the those discrete connected linkage groups
-    tax_spectrum_df, node_groupings = make_tax_spectrum_df(LN, G, taxonomy_df, tax)
-
-    # Summarize each linkage group on the basis of abundance
-    ln_abund_df = get_linkage_group_abundances(LN, detail_hdf)
-
     # Make sure that the output folder exists
     if not os.path.exists(output_folder):
         logging.info(f"Creating folder {output_folder}")
@@ -111,57 +98,60 @@ def glam_network(
     # The path for output files will all be within the output folder
     output_path = lambda fn: os.path.join(output_folder, fn)
 
-    # Write out the graph in graphml format
-    logging.info("Writing out graph object as graphml")
-    nx.write_graphml(G, output_path("graphml"))
+    # Read the taxonomy
+    tax = Taxonomy(summary_hdf)
+
+    # Read the taxonomic assignment per gene
+    taxonomy_df = read_taxonomy_df(summary_hdf)
+
+    # Count up the number of genes assigned to each linkage group, in a long Data Frame
+    tax_counts_df = count_tax_assignments(LN, taxonomy_df, tax)
+
+    # Write out the tax counts in shards
+    write_out_shards(tax_counts_df, output_path('tax_counts'))
+
+    # Summarize each connected set of linkage groups on the basis of taxonomic spectrum
+    # In the process, record the those discrete connected linkage groups
+    tax_spectrum_df, node_groupings = make_tax_spectrum_df(LN, G, taxonomy_df, tax)
+
+    # Summarize each linkage group on the basis of abundance
+    ln_abund_df = get_linkage_group_abundances(LN, detail_hdf)
+
+    # Write out the table of relative abundances for each linkage group
+    logging.info("Writing out relative abundance of linkage groups")
+    write_out_shards(
+        ln_abund_df.reset_index(
+        ).rename(
+            columns={'index': 'linkage_group'}
+        ),
+        output_path("abund")
+    )
 
     # Write out the graph also in tabular format
     logging.info("Writing out graph object in tabular format")
-    reformat_graphml(G, output_path("graph"))
-
-    # Write out the taxonomic spectrum for each subnetwork
-    logging.info("Writing out taxonomic spectrum")
-    tax_spectrum_df.T.reset_index().to_feather(output_path("taxSpectrum.feather"))
+    write_edges(G, output_path("edges.feather"))
 
     # Write out the table of which genes are part of which linkage group
     logging.info("Writing out gene index")
-    pd.DataFrame([
+    gene_index_df = pd.DataFrame([
         {
             "gene": gene_name,
             "linkage_group": group_name
         }
         for group_name, gene_name_list in LN.group_genes.items()
         for gene_name in gene_name_list
-    ]).to_feather(
-        output_path("linkage-group-gene-index.feather")
-    )
-
-    # Write out the table of which linkage groups are connected
-    logging.info("Writing out subnetworks")
-    pd.DataFrame([
-        {
-            "linkage_group": group_name,
-            "subnetwork": subnetwork_name
-        }
-        for subnetwork_name, group_name_list in node_groupings.items()
-        for group_name in group_name_list
-    ]).to_feather(
-        output_path("subnetworks.feather")
-    )
-
-    # Write out the table of relative abundances for each linkage group
-    logging.info("Writing out relative abundance of linkage groups")
-    ln_abund_df.reset_index().to_feather(
-        output_path("linkage-group-abundance.feather")
+    ])
+    gene_index_df.to_feather(
+        output_path("gene-index.feather")
     )
 
     # Write out the coordinates to plot each linkage group
     linkage_partition(
         output_path(f"coords.feather"),
-        output_path("taxSpectrum.feather"),
-        output_path("linkage-group-gene-index.feather"),
-        output_path("subnetworks.feather"),
-        output_path("graphml"),
+        tax_spectrum_df,
+        gene_index_df,
+        node_groupings,
+        G,
         method=method,
         metric=metric,
     )
@@ -171,6 +161,32 @@ def glam_network(
         output_folder,
         summary_hdf,
     )
+
+
+def write_out_shards(df, output_folder, ix_col='linkage_group', mod=1000):
+    """Write out a DataFrame in shards."""
+    
+    assert 'group_ix' not in df.columns.values, "Table cannot contain `group_ix`"
+
+    logging.info(f"Writing out a table with {df.shape[0]:,} rows to {output_folder} in {mod} shards")
+
+    # Make sure the output folder exists
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    # Iterate over the DataFrame, sharding `ix_col` by `mod`
+    for group_ix, group_df in df.assign(
+        group_ix = df[ix_col].apply(lambda i: i % mod)
+    ).groupby(
+        'group_ix'
+    ):
+        group_df.drop(
+            columns='group_ix'
+        ).reset_index(
+            drop=True
+        ).to_feather(
+            os.path.join(output_folder, f"{group_ix}.feather")
+        )
 
 
 @lru_cache(maxsize=1)
@@ -1342,8 +1358,45 @@ def read_taxonomy_df(summary_hdf):
         )
 
 
-# Make a DataFrame with the taxonomy spectrum for every connected group
+def count_tax_assignments(LN, taxonomy_df, tax):
+    """Count up the number of genes assigned to each taxon."""
+
+    # The final DataFrame will have the columns linkage_group, tax_id, parent, name, count
+
+    # Build the DataFrame from a list
+    output = []
+
+    # Iterate over each linkage group
+    for linkage_group, gene_name_set in LN.group_genes.items():
+
+        # Get the list of tax IDs, and get the total counts for each
+        tax_counts = pd.Series([
+            taxonomy_df.loc[gene_name, "tax_id"]
+            for gene_name in gene_name_set
+        ]).value_counts()
+
+        # Add this set of counts to the DataFrame
+        output.extend([
+            {
+                'linkage_group': linkage_group,
+                'tax_id': tax_id,
+                'count': count
+            }
+            for tax_id, count in tax_counts.items()
+        ])
+
+    # Format as a DataFrame
+    output = pd.DataFrame(output)
+
+    # Add the parent and name for each
+    return output.assign(
+        parent = output.tax_id.apply(tax.tax["parent"].get),
+        name = output.tax_id.apply(tax.tax["name"].get),
+    )
+    
+
 def make_tax_spectrum_df(LN, G, taxonomy_df, tax):
+    """Make a DataFrame with the taxonomy spectrum for every connected group."""
 
     # Make a DataFrame with the taxonomy spectrum for every connected group
     tax_spectrum_df = {}
@@ -1521,13 +1574,9 @@ def get_linkage_group_abundances(LN, detail_hdf):
     return pd.DataFrame(abund_dict).fillna(0)
 
 
-def reformat_graphml(G, output_folder):
-    """Reformat the data from the graph object as feather tables."""
+def write_edges(G, output_fp):
+    """Reformat the edges from the graph object as a table in feather format."""
     
-    if not os.path.exists(output_folder):
-        logging.info(f"Creating folder {output_folder}")
-        os.makedirs(output_folder)
-
     # Make a table of edges
     edge_df = pd.DataFrame([
         {
@@ -1537,34 +1586,17 @@ def reformat_graphml(G, output_folder):
         for edge in G.edges
     ])
 
-    # Save to a file
+    # Save to the specified file
     edge_df.reset_index(
         drop=True
     ).to_feather(
-        os.path.join(output_folder, "edges.feather")
+        output_fp
     )
 
-    # Make a node table
-    node_df = pd.DataFrame([
-        {
-            "linkage_group": node_name,
-            **node_attrs
-        }
-        for node_name, node_attrs in G.nodes.items()
-    ])
-
-    # Save to a file
-    node_df.reset_index(
-        drop=True
-    ).to_feather(
-        os.path.join(output_folder, "nodes.feather")
-    )
-
-
-def expand_subnetworks(subnetworks_fp, graphml_fp, coords, q=0.25):
+def expand_subnetworks(node_groupings, G, coords, q=0.25):
     """Given a set of coordinates, expand to include the members of each subnetwork."""
 
-    # Find the median (if q=0.5) distance to the nearest neighbor for each
+    # Find the first quartile (if q=0.25) distance to the nearest neighbor for each
     median_nearest_neighbor = np.quantile(
         [
             np.delete(r, i).min()
@@ -1583,17 +1615,14 @@ def expand_subnetworks(subnetworks_fp, graphml_fp, coords, q=0.25):
     # Get the list of nodes that are contained in each subnetwork
     subnetwork_members = {
         n: set(d['linkage_group'].tolist())
-        for n, d in pd.read_feather(
-            subnetworks_fp
-        ).groupby(
+        for n, d in node_groupings.groupby(
             "subnetwork"
         )
     }
     logging.info(f"Read in {sum(map(len, subnetwork_members.values())):,} linkage groups in {len(subnetwork_members):,} subnetworks")
 
     # Read in the graph structure of the subnetworks
-    G = nx.read_graphml(graphml_fp)
-    logging.info(f"Read in network layout for {len(G.nodes):,} linkage groups")
+    logging.info(f"Processing network layout for {len(G.nodes):,} linkage groups")
 
     # Expand each subnetwork using that value as the maximum size in either dimension
     return pd.concat(
@@ -1653,20 +1682,14 @@ def expand_single_subnetwork(lg_name_list, G, tsne_coords, final_size):
 
 
 @lru_cache(maxsize=1)
-def subnetwork_size(gene_index_fp, subnetworks_fp):
+def subnetwork_size(gene_index_df, node_groupings):
     # Get the number of genes per linkage group
-    lg_size = pd.read_feather(
-        gene_index_fp
-    ).groupby(
+    lg_size = gene_index_df[
         "linkage_group"
-    ).apply(
-        len
-    )
+    ].value_counts()
 
     # Get the grouping of linkage groups into subnetworks
-    return pd.read_feather(
-        subnetworks_fp
-    ).assign(
+    return node_groupings.assign(
         n_genes=lambda d: d["linkage_group"].apply(lg_size.get)
     ).groupby(
         "subnetwork"
@@ -1677,17 +1700,10 @@ def subnetwork_size(gene_index_fp, subnetworks_fp):
 
 @lru_cache(maxsize=16)
 def taxonomic_linkage_clustering(
-    tax_spectra_fp,
+    tax_spectra_df,
     method="complete",
     metric="euclidean",
 ):
-
-    # Read in the table with taxonomic spectra per subnetwork
-    tax_spectra_df = pd.read_feather(
-        tax_spectra_fp
-    ).set_index(
-        "index"
-    )
 
     # Perform linkage clustering
     Z = linkage(
@@ -1889,10 +1905,10 @@ class PartitionMap:
 
 def linkage_partition(
     output_fp, 
-    tax_spectra_fp,
-    gene_index_fp, 
-    subnetworks_fp,
-    graphml_fp,
+    tax_spectrum_df,
+    gene_index_df,
+    node_groupings,
+    G,
     method="complete",
     metric="euclidean",
 ):
@@ -1900,15 +1916,15 @@ def linkage_partition(
     # Get the linkage clustering based on taxonomic assignments
     logging.info("Performing linkage clustering")
     Z, Z_index = taxonomic_linkage_clustering(
-        tax_spectra_fp,
+        tax_spectrum_df,
         method=method,
         metric=metric
     )
     
     # Get the sizes of each subnetwork
     size_dict = subnetwork_size(
-        gene_index_fp, 
-        subnetworks_fp,
+        gene_index_df,
+        node_groupings,
     )
 
     # Use that linkage matrix to build a set of coordinates
@@ -1919,8 +1935,8 @@ def linkage_partition(
     # Replace each subnetwork with its members
     logging.info("Expanding subnetworks")
     df = expand_subnetworks(
-        subnetworks_fp, 
-        graphml_fp,
+        node_groupings, 
+        G,
         coords,
     ).reset_index(
         drop=True

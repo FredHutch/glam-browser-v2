@@ -3807,6 +3807,8 @@ def draw_taxonomy_sunburst(
         "species",
     ]
 ):
+    """Input `cag_tax_df` has the columns: tax_id, parent, name, count"""
+
     # If no assignments were made, just show an empty plot
     if cag_tax_df is None:
         fig = go.Figure(data=[])
