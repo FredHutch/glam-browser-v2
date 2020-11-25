@@ -22,7 +22,6 @@ def glam_network(
     detail_hdf,
     output_folder,
     output_prefix,
-    cache=None,
     metric="euclidean",
     method="average",
     aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
@@ -40,7 +39,6 @@ def glam_network(
     contig_gene_sets = build_contig_dict(
         summary_hdf, 
         detail_hdf, 
-        cache=cache,
         testing=testing,
     )
 
@@ -48,7 +46,7 @@ def glam_network(
     merged_contig_sets = combine_overlapping_contigs(contig_gene_sets)
 
     # 3 - Build a network of gene linkage groups
-    LN = LinkageNetwork(summary_hdf, merged_contig_sets, cache=cache, testing=testing)
+    LN = LinkageNetwork(summary_hdf, merged_contig_sets, testing=testing)
 
     #####################
     # PRUNE THE NETWORK #
@@ -90,7 +88,7 @@ def glam_network(
         logging.info("No genome data found -- skipping")
 
     # Read the taxonomy
-    tax = Taxonomy(summary_hdf, cache=cache)
+    tax = Taxonomy(summary_hdf)
 
     # Read the taxonomic assignment per gene
     taxonomy_df = read_taxonomy_df(summary_hdf)
@@ -166,37 +164,12 @@ def glam_network(
         metric=metric,
     )
 
-
-def cache_fp(cache, prefix, key):
-    """Format the path to a feather file in the cache."""
-    assert cache is not None
-    assert os.path.exists(cache)
-
-    # Construct the path to the file directly
-    return os.path.join(cache, f"{prefix}.{key.replace('/', '.')}")
-
-
-def read_cache(cache, prefix, key):
-    """Read from a file in the cache."""
-    # Format the path
-    fp = cache_fp(cache, prefix, key)
-
-    # If the file does not exist
-    if not os.path.exists(fp):
-        return None
-    
-    # Otherwise, read the file
-    logging.info(f"Reading from the cache: {fp}")
-    return pd.read_feather(fp)
-
-
-def write_cache(df, cache, prefix, key):
-    """Write to a file in the cache."""
-
-    # Format the path
-    fp = cache_fp(cache, prefix, key)
-    logging.info(f"Writing to the cache: {fp}")
-    return df.to_feather(fp)
+    # Annotate the linkage groups
+    annotate_linkage_groups(
+        output_folder,
+        output_prefix,
+        summary_hdf,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -217,27 +190,14 @@ def get_cag_size(summary_hdf):
 
 
 @lru_cache(maxsize=1)
-def read_cag_dict(summary_hdf, cache=None):
+def read_cag_dict(summary_hdf):
     """Get the dict matching each gene to a CAG."""
     logging.info("Reading the assignment of genes to CAGs")
-
-    # Check the cache
-    if cache is not None:
-
-        # Try to read the file
-        df = read_cache(cache, "read_cag_dict", "output")
-        if df is not None:
-            return df.set_index(
-                "gene"
-            )["CAG"]
 
     df = pd.read_hdf(
         summary_hdf,
         "/annot/gene/cag",
     )
-
-    if cache is not None:
-        write_cache(df, cache, "read_cag_dict", "output")
 
     return df.set_index(
         "gene"
@@ -248,18 +208,6 @@ def read_cag_dict(summary_hdf, cache=None):
 def read_contig_info(summary_hdf, detail_hdf, path_name, remove_edge=True, cache=None):
     """Read the contig information for a single assembly."""
 
-    # Check the cache
-    if cache is not None:
-
-        # Try to read the file
-        df = read_cache(cache, "read_contig_info", path_name)
-
-        # If there was data in the cache
-        if df is not None:
-            return df
-
-        # Otherwise, compute the data
-
     # Read the table
     logging.info(f"Reading {path_name}")
     with pd.HDFStore(detail_hdf, 'r') as store:
@@ -269,7 +217,7 @@ def read_contig_info(summary_hdf, detail_hdf, path_name, remove_edge=True, cache
     df = df.loc[df["catalog_gene"].isnull().apply(lambda v: v is False)]
 
     # Remove genes which don't have a CAG assigned
-    cag_dict = read_cag_dict(summary_hdf, cache=cache)
+    cag_dict = read_cag_dict(summary_hdf)
     df = df.loc[df["catalog_gene"].apply(
         cag_dict.get).isnull().apply(lambda v: v is False)]
 
@@ -285,12 +233,6 @@ def read_contig_info(summary_hdf, detail_hdf, path_name, remove_edge=True, cache
     ).reset_index(
         drop=True
     )
-
-    # If the cache folder has been specified
-    if cache is not None:
-
-        # Write to the cache
-        write_cache(df, cache, "read_contig_info", path_name)
 
     return df
 
@@ -339,7 +281,6 @@ def build_contig_dict(
     detail_hdf, 
     remove_edge=False, 
     min_genes=2, 
-    cache=None,
     testing=False,
 ):
     """Read in a set with the membership of the genes in every contig."""
@@ -356,7 +297,6 @@ def build_contig_dict(
             detail_hdf,
             path_name,
             remove_edge=remove_edge,
-            cache=cache,
         )
 
         # Iterate over every contig
@@ -459,12 +399,14 @@ def write_out(folder, title, dat, verbose=False):
         logging.info(f"Wrote: {fpo}")
 
 
-def annotate_linkage_groups(input_prefix, hdf_fp):
+def annotate_linkage_groups(input_folder, input_prefix, hdf_fp):
     """Write out all of the annotations available for each linkage group."""
+
+    format_fp = lambda f: os.path.join(input_folder, f)
 
     # Skip taxonomic assignments if they are already done
     if all([
-        os.path.exists(f"{input_prefix}/taxonomic/{tax_rank}.feather")
+        os.path.exists(format_fp(f"{input_prefix}/taxonomic/{tax_rank}.feather"))
         for tax_rank in ["phylum", "class", "order", "family", "genus", "species"]
     ]):
         logging.info("All taxonomic labels have been computed already")
@@ -473,7 +415,7 @@ def annotate_linkage_groups(input_prefix, hdf_fp):
 
         # Read in the table with the taxonomic assignments for genes in each linkage group
         lg_taxa = pd.read_feather(
-            f"{input_prefix}.taxSpectrum.feather"
+            format_fp(f"{input_prefix}.taxSpectrum.feather")
         ).set_index("index")
 
         # Read in the table with the names and ranks for each taxon
@@ -482,7 +424,7 @@ def annotate_linkage_groups(input_prefix, hdf_fp):
         # For each taxonomic level, write out the best hit for each linkage group
         for tax_rank in ["phylum", "class", "order", "family", "genus", "species"]:
             if os.path.exists(
-                f"{input_prefix}/taxonomic/{tax_rank}.feather"
+                format_fp(f"{input_prefix}/taxonomic/{tax_rank}.feather")
             ):
 
                 logging.info(
@@ -752,7 +694,7 @@ def find_linkage_groups(merged_contig_sets):
 
 class LinkageNetwork:
 
-    def __init__(self, summary_hdf, merged_contig_sets, max_cag_size=10000, cache=None, testing=False):
+    def __init__(self, summary_hdf, merged_contig_sets, max_cag_size=10000, testing=False):
 
         # The data we will track in this object are:
 
@@ -764,7 +706,7 @@ class LinkageNetwork:
         self.group_contigs = defaultdict(set)
 
         # As part of building the linkage groups, we need to know the CAG assignment for each gene
-        cag_dict = read_cag_dict(summary_hdf, cache=cache)
+        cag_dict = read_cag_dict(summary_hdf)
 
         # We will also need to know how large each CAG is
         cag_size = cag_dict.value_counts()
@@ -1319,31 +1261,18 @@ def add_genomes_to_graph(
 
 class Taxonomy:
 
-    def __init__(self, summary_hdf, cache=None):
+    def __init__(self, summary_hdf):
         """Read the taxonomy structure."""
 
-        df = None
-        if cache is not None:
-            # Try to read the file
-            df = read_cache(cache, "taxonomy", "table")
-
-        # If there was no data in the cache
-        if df is None:
-
-            df = pd.read_hdf(summary_hdf, "/ref/taxonomy").apply(
-                lambda c: c.apply(lambda v: 'none' if pd.isnull(v) else str(int(float(v)))) if c.name in ['parent', 'tax_id'] else c
-            ).reset_index(
-                drop=True
-            )
-
-            # If the cache folder has been specified
-            if cache is not None:
-
-                # Write to the cache
-                write_cache(df, cache, "taxonomy", "table")
-
-        # Save to the object
-        self.tax = df.set_index("tax_id")
+        # Save the taxonomy
+        self.tax = pd.read_hdf(summary_hdf, "/ref/taxonomy").apply(
+            lambda c: c.apply(lambda v: 'none' if pd.isnull(v) else str(
+                int(float(v)))) if c.name in ['parent', 'tax_id'] else c
+        ).reset_index(
+            drop=True
+        ).set_index(
+            "tax_id"
+        )
 
     @lru_cache(maxsize=None)
     def path_to_root(self, tax_id):
@@ -2024,27 +1953,6 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--cache",
-        default=None,
-        type=str,
-        help="If specified, cache intermediate files in this folder"
-    )
-
-    parser.add_argument(
-        "--method",
-        default="average",
-        type=str,
-        help="Linkage clustering method"
-    )
-
-    parser.add_argument(
-        "--metric",
-        default="euclidean",
-        type=str,
-        help="Linkage clustering distance metric"
-    )
-
-    parser.add_argument(
         "--testing",
         action="store_true",
         help="If specified, use a random subset of the data for testing purposes"
@@ -2057,34 +1965,16 @@ if __name__ == "__main__":
     for fp in [args.summary_hdf, args.detail_hdf]:
         assert os.path.exists(fp), f"Cannot find {fp}"
 
-    # If a cache folder has been specified
-    if args.cache is not None:
-
-        # If the folder does not exist
-        if not os.path.exists(args.cache):
-
-            # Make the folder
-            logging.info(f"Creating cache folder {args.cache}")
-            os.makedirs(args.cache)
-
-        logging.info(f"Using cache folder {args.cache}")
-
     glam_network(
         args.summary_hdf,
         args.detail_hdf,
         args.output_folder,
         args.output_prefix,
-        cache=args.cache,
-        method=args.method,
-        metric=args.metric,
+        method='complete',
+        metric='euclidean',
         testing=args.testing,
         aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
         region=os.environ.get("AWS_REGION", "us-west-2"),
         min_node_size=10
-    )
-
-    annotate_linkage_groups(
-        args.output_prefix,
-        args.summary_hdf,
     )
