@@ -57,3 +57,4 @@ testing/
 work/
 manifests/
 .env
+.vscode/settings.json
