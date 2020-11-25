@@ -145,6 +145,9 @@ def glam_network(
         output_path("gene-index.feather")
     )
 
+    # Compute the size of each linkage group
+    lg_size = gene_index_df["linkage_group"].value_counts()
+
     # Write out the coordinates to plot each linkage group
     linkage_partition(
         output_path(f"coords.feather"),
@@ -156,10 +159,40 @@ def glam_network(
         metric=metric,
     )
 
+    logging.info("Computing taxonomic labels")
+
+    # For each taxonomic level, write out the best hit for each linkage group
+    for tax_rank in ["phylum", "class", "order", "family", "genus", "species"]:
+
+        write_out(
+            f"taxonomic/",
+            tax_rank,
+            pick_top_taxon(
+                tax_spectrum_df, # The proportional assignment of genes per subnetwork        # Proportional taxonomic assignment of genes per subnetwork
+                node_groupings, # Subnetwork grouping of linkage groups
+                  # The         # Number of genes in each linkage group
+                  # grouping o         # Taxonomy
+                  # f l       # Specific taxonomic rank
+                  # inkage groups i   # Minimum threshold for assignment
+                  # nto subnetwor      # Size threshold of linkage group for assignment
+                  #ks
+                lg_size,         # The number of genes per linkage group
+                tax,             # The taxonomy
+                tax_rank         # Specific taxonomic rank
+            )
+        )
+
+        logging.info(
+            f"Wrote out taxonomic assignments at the {tax_rank} level")
+
     # Annotate the linkage groups
     annotate_linkage_groups(
         output_folder,
         summary_hdf,
+        tax_spectrum_df,
+        node_groupings,
+        tax,
+        gene_index_df,
     )
 
 
@@ -384,47 +417,11 @@ def write_out(folder, title, dat, verbose=False):
         logging.info(f"Wrote: {fpo}")
 
 
-def annotate_linkage_groups(input_folder, hdf_fp):
+def annotate_linkage_groups(input_folder, hdf_fp, lg_taxa, node_groupings, tax_df):
     """Write out all of the annotations available for each linkage group."""
 
     format_fp = lambda f: os.path.join(input_folder, f)
 
-    # Skip taxonomic assignments if they are already done
-    if all([
-        os.path.exists(format_fp(f"taxonomic/{tax_rank}.feather"))
-        for tax_rank in ["phylum", "class", "order", "family", "genus", "species"]
-    ]):
-        logging.info("All taxonomic labels have been computed already")
-    else:
-        logging.info("Computing taxonomic labels")
-
-        # Read in the table with the taxonomic assignments for genes in each linkage group
-        lg_taxa = pd.read_feather(
-            format_fp(f"taxSpectrum.feather")
-        ).set_index("index")
-
-        # Read in the table with the names and ranks for each taxon
-        tax_df = pd.read_hdf(hdf_fp, "/ref/taxonomy").set_index("tax_id")
-
-        # For each taxonomic level, write out the best hit for each linkage group
-        for tax_rank in ["phylum", "class", "order", "family", "genus", "species"]:
-            if os.path.exists(
-                format_fp(f"taxonomic/{tax_rank}.feather")
-            ):
-
-                logging.info(
-                    f"Output already exists for {tax_rank} level summaries, skipping")
-
-            else:
-
-                write_out(
-                    f"taxonomic/",
-                    tax_rank,
-                    pick_top_taxon(lg_taxa, tax_df, tax_rank)
-                )
-
-                logging.info(
-                    f"Wrote out taxonomic assignments at the {tax_rank} level")
 
     # Read in the table listing which genes are grouped into which linkage groups
     lg_membership = pd.read_feather(
@@ -550,7 +547,15 @@ def annotate_linkage_groups(input_folder, hdf_fp):
     )
 
 
-def pick_top_taxon(lg_taxa, tax_df, tax_rank, min_prop=0.5):
+def pick_top_taxon(
+    lg_taxa,         # Proportional taxonomic assignment of genes per subnetwork
+    node_groupings,  # Subnetwork grouping of linkage groups
+    lg_size,         # Number of genes in each linkage group
+    tax_df,          # Taxonomy
+    tax_rank,        # Specific taxonomic rank
+    min_prop=0.5,    # Minimum threshold for assignment
+    min_size=20      # Size threshold of linkage group for assignment
+):
     """Pick the top hit for each linkage group at a given rank"""
 
     # Subset down to the assignments at this rank
@@ -568,8 +573,6 @@ def pick_top_taxon(lg_taxa, tax_df, tax_rank, min_prop=0.5):
         axis=1
     )
 
-    logging.info(rank_assignments.head())
-
     # Pick the top hit per linkage group
     rank_assignments = pd.DataFrame(
         [
@@ -578,16 +581,18 @@ def pick_top_taxon(lg_taxa, tax_df, tax_rank, min_prop=0.5):
                 "top_hit": lg_assignments.sort_values().index.values[-1],
                 "proportion": lg_assignments.sort_values().values[-1],
             }
-            for lg_name, lg_assignments in rank_assignments.iterrows()
+            for subnetwork_name, lg_assignments in rank_assignments.iterrows()
+            for lg_name in node_groupings.query(
+                f"subnetwork == '{subnetwork_name}'"
+            )["linkage_group"].values
+            if lg_size[lg_name] >= min_size
         ]
+    ).query(
+        f"proportion >= {min_prop}"
     )
 
     return rank_assignments.assign(
-        top_hit_name=rank_assignments.apply(
-            lambda r: tax_df.loc[r["top_hit"],
-                                 "name"] if r["proportion"] >= min_prop else "Unassigned",
-            axis=1
-        )
+        top_hit_name=rank_assignments["top_hit"].apply(tax_df["name"].get)
     ).set_index(
         "linkage_group"
     )[
