@@ -22,7 +22,7 @@ def glam_network(
     detail_hdf,
     output_folder,
     metric="euclidean",
-    method="average",
+    method="complete",
     aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
     region=os.environ.get("AWS_REGION", "us-west-2"),
@@ -157,7 +157,7 @@ def glam_network(
 
     # Write out the coordinates to plot each linkage group
     linkage_partition(
-        output_path(f"{metric}.{method}.coords.feather"),
+        output_path(f"coords.feather"),
         output_path("taxSpectrum.feather"),
         output_path("linkage-group-gene-index.feather"),
         output_path("subnetworks.feather"),
@@ -1678,7 +1678,7 @@ def subnetwork_size(gene_index_fp, subnetworks_fp):
 @lru_cache(maxsize=16)
 def taxonomic_linkage_clustering(
     tax_spectra_fp,
-    method="average",
+    method="complete",
     metric="euclidean",
 ):
 
@@ -1893,7 +1893,7 @@ def linkage_partition(
     gene_index_fp, 
     subnetworks_fp,
     graphml_fp,
-    method="average",
+    method="complete",
     metric="euclidean",
 ):
     
