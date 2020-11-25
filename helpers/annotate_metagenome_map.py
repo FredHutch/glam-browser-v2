@@ -2,6 +2,7 @@
 
 import argparse
 from functools import lru_cache
+import json
 import logging
 import os
 import pandas as pd
@@ -18,10 +19,20 @@ def read_gene_cag_dict(hdf_fp):
 
 
 def read_corncob(hdf_fp):
-    return pd.read_hdf(
+    logging.info(f"Reading in '/stats/cag/corncob' from {hdf_fp}")
+    df = pd.read_hdf(
         hdf_fp,
         "/stats/cag/corncob",
     )
+
+    # Make sure that we have a wald metric available
+    if "wald" not in df.columns.values:
+        logging.info("Computing Wald metric")
+        df = df.assign(
+            wald = df["estimate"] / df["std_error"]
+        )
+
+    return df
 
 
 def calc_mean_wald(lg_membership, gene_cag_dict, wald_dict):
@@ -109,13 +120,29 @@ def annotate_linkage_groups(input_prefix, hdf_fp):
         "index"
     )
 
+    # Keep an index of the abundance file objects
+    abund_manifest = []
+
     # Write out the abundance for each specimen
     for specimen_name, specimen_abund in lg_abund.iteritems():
+
+        # Assign an index for this object
+        ix = len(abund_manifest)
+
+        # Annotate this object in the manifest
+        abund_manifest.append({
+            "type": "specimen",
+            "label": specimen_name,
+            "index": ix
+        })
+
+        # Write out the abundance vector
         write_out(
-            f"{input_prefix}/abundance/specimen/",
-            specimen_name, 
+            f"{input_prefix}/abundance/",
+            ix, 
             specimen_abund
         )
+
     logging.info(f"Wrote out {lg_abund.shape[1]:,} specimen abundances")
 
     # Read in the manifest
@@ -126,45 +153,81 @@ def annotate_linkage_groups(input_prefix, hdf_fp):
     manifest = manifest.drop_duplicates().set_index("specimen")
 
     # Group together specimens which have the same value
-    i = 0
     for col_name in manifest.columns.values:
         for value, d in manifest.groupby(col_name):
             if d.shape[0] > 1:
+
+                # Assign an index for this object
+                ix = len(abund_manifest)
+
+                # Annotate this object in the manifest
+                abund_manifest.append({
+                    "type": "manifest",
+                    "column": col_name,
+                    "value": value,
+                    "index": ix
+                })
+
+                # Write out the file object
                 write_out(
-                    f"{input_prefix}/abundance/manifest/{col_name}",
-                    value,
+                    f"{input_prefix}/abundance/",
+                    ix,
                     lg_abund.reindex(
                         columns=d.index.values
                     ).sum(
                         axis=1
                     )
                 )
-                i += 1
-    logging.info(f"Wrote out {i:,} abundances of specimens grouped by metadata")
+
+    # Write out the specimen manifest
+    with open(f"{input_prefix}/abundance/index.json", "wt") as handle:
+        logging.info("Writing out abundance manifest")
+        json.dump(abund_manifest, handle)
+
+    logging.info(f"Wrote out {len(abund_manifest):,} abundances of specimens grouped by metadata")
 
     # Read in the table linking each gene to a CAG
     gene_cag_dict = read_gene_cag_dict(hdf_fp)
 
+    # Keep track of the wald values written out
+    wald_manifest = []
+
     # Summarize the linkage groups on the basis of their average Wald for each parameter
-    i = 0
     for parameter, parameter_df in read_corncob(hdf_fp).groupby("parameter"):
 
         # Skip the intercept
         if parameter == "(Intercept)":
             continue
 
+        # Get the index for this parameter
+        ix = len(wald_manifest)
+
+        # Add this to the manifest
+        wald_manifest.append({
+            "type": "wald",
+            "parameter": parameter,
+            "index": ix
+        })
+
+        # Write out the data object
         write_out(
-            f"{input_prefix}/wald/parameter/",
-            parameter,
+            f"{input_prefix}/wald/",
+            ix,
             calc_mean_wald(
                 lg_membership,
                 gene_cag_dict,
                 parameter_df.set_index("CAG")["wald"].to_dict()
             )
         )
-        i += 1
+        logging.info(f"Wrote out wald summary for {parameter}")
+
+    # Write out the wald manifest
+    with open(f"{input_prefix}/wald/index.json", "wt") as handle:
+        logging.info("Writing out wald parameter manifest")
+        json.dump(wald_manifest, handle)
+
     logging.info(
-        f"Wrote out average Wald metrics for {i:,} parameters in this dataset"
+        f"Wrote out average Wald metrics for {len(wald_manifest):,} parameters in this dataset"
     )
 
 
