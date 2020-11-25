@@ -189,7 +189,6 @@ def write_out_shards(df, output_folder, ix_col='linkage_group', mod=1000):
         )
 
 
-@lru_cache(maxsize=1)
 def assembly_key_list(detail_hdf):
     """Get the list of specimens which have assembly informtion."""
     with pd.HDFStore(detail_hdf, 'r') as store:
@@ -200,13 +199,11 @@ def assembly_key_list(detail_hdf):
         ]
 
 
-@lru_cache(maxsize=1)
 def get_cag_size(summary_hdf):
     """Get the size of each CAG."""
     return read_cag_dict(summary_hdf).value_counts()
 
 
-@lru_cache(maxsize=1)
 def read_cag_dict(summary_hdf):
     """Get the dict matching each gene to a CAG."""
     logging.info("Reading the assignment of genes to CAGs")
@@ -221,7 +218,6 @@ def read_cag_dict(summary_hdf):
     )["CAG"]
 
 
-@lru_cache()
 def read_contig_info(summary_hdf, detail_hdf, path_name, remove_edge=True, cache=None):
     """Read the contig information for a single assembly."""
 
@@ -263,34 +259,6 @@ def genome_key_list(summary_hdf):
             for p in store
             if p.startswith("/genomes/detail/")
         ]
-
-
-@lru_cache(maxsize=None)
-def read_genome_info(summary_hdf, path_name):
-    """Read the alignment information for a single genome,"""
-
-    # Read the table
-    with pd.HDFStore(summary_hdf, 'r') as store:
-        df = pd.read_hdf(store, path_name)
-
-    # Return the number of genes for each CAG
-    return pd.DataFrame(
-        dict(
-            n_genes=df.groupby(
-                ["genome_id", "CAG"]
-            ).apply(
-                len
-            )
-        )
-    ).reset_index(
-    ).assign(
-        cag_size=lambda d: d["CAG"].apply(
-            int
-        ).apply(
-            get_cag_size(summary_hdf).get
-        ),
-        genome_size=df.shape[0]
-    )
 
 
 def build_contig_dict(
@@ -1681,7 +1649,6 @@ def expand_single_subnetwork(lg_name_list, G, tsne_coords, final_size):
     )
 
 
-@lru_cache(maxsize=1)
 def subnetwork_size(gene_index_df, node_groupings):
     # Get the number of genes per linkage group
     lg_size = gene_index_df[
@@ -1698,7 +1665,6 @@ def subnetwork_size(gene_index_df, node_groupings):
     )
 
 
-@lru_cache(maxsize=16)
 def taxonomic_linkage_clustering(
     tax_spectra_df,
     method="complete",
