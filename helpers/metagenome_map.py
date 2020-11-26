@@ -89,14 +89,8 @@ def glam_network(
     else:
         logging.info("No genome data found -- skipping")
 
-    # Make sure that the output folder exists
-    if not os.path.exists(output_folder):
-        logging.info(f"Creating folder {output_folder}")
-        os.makedirs(output_folder)
-    logging.info(f"Writing output to folder {output_folder}")
-
     # The path for output files will all be within the output folder
-    output_path = lambda fn: os.path.join(output_folder, fn)
+    output_path = lambda fn: os.path.join(output_folder, "linkage_group", fn)
 
     # Read the taxonomy
     tax = Taxonomy(summary_hdf)
@@ -108,19 +102,19 @@ def glam_network(
     tax_counts_df = count_tax_assignments(LN, taxonomy_df, tax)
 
     # Write out the tax counts in shards
-    write_out_shards(tax_counts_df, output_path('tax_counts'))
+    write_out_shards(tax_counts_df, output_folder, 'tax_counts')
 
     # Summarize each connected set of linkage groups on the basis of taxonomic spectrum
     # In the process, record the those discrete connected linkage groups
     tax_spectrum_df, node_groupings = make_tax_spectrum_df(LN, G, taxonomy_df, tax)
 
     # Summarize each linkage group on the basis of abundance
-    ln_abund_df = get_linkage_group_abundances(LN, detail_hdf)
+    lg_abund_df = get_linkage_group_abundances(LN, detail_hdf)
 
     # Write out the table of relative abundances for each linkage group
     logging.info("Writing out relative abundance of linkage groups")
     write_out_shards(
-        ln_abund_df.reset_index(
+        lg_abund_df.reset_index(
         ).rename(
             columns={'index': 'linkage_group'}
         ),
@@ -129,7 +123,7 @@ def glam_network(
 
     # Write out the graph also in tabular format
     logging.info("Writing out graph object in tabular format")
-    write_edges(G, output_path("edges.feather"))
+    write_edges(G, output_folder)
 
     # Write out the table of which genes are part of which linkage group
     logging.info("Writing out gene index")
@@ -141,8 +135,11 @@ def glam_network(
         for group_name, gene_name_list in LN.group_genes.items()
         for gene_name in gene_name_list
     ])
-    gene_index_df.to_feather(
-        output_path("gene-index.feather")
+    write_out(
+        output_folder,
+        "gene-index",
+        gene_index_df,
+        verbose=True
     )
 
     # Compute the size of each linkage group
@@ -150,7 +147,7 @@ def glam_network(
 
     # Write out the coordinates to plot each linkage group
     linkage_partition(
-        output_path(f"coords.feather"),
+        output_folder,
         tax_spectrum_df,
         gene_index_df,
         node_groupings,
@@ -185,27 +182,26 @@ def glam_network(
         logging.info(
             f"Wrote out taxonomic assignments at the {tax_rank} level")
 
-    # Annotate the linkage groups
-    annotate_linkage_groups(
-        output_folder,
+    # Write out the relative abundances of each linkage group
+    write_lg_abund(
+        output_path("abundance"),
+        lg_abund_df,
+    )
+
+    # Write out the mean wald metric by linkage group
+    write_wald(
+        output_path("wald"),
         summary_hdf,
-        tax_spectrum_df,
-        node_groupings,
-        tax,
         gene_index_df,
     )
 
 
-def write_out_shards(df, output_folder, ix_col='linkage_group', mod=1000):
+def write_out_shards(df, output_folder, file_prefix, ix_col='linkage_group', mod=1000):
     """Write out a DataFrame in shards."""
     
     assert 'group_ix' not in df.columns.values, "Table cannot contain `group_ix`"
 
     logging.info(f"Writing out a table with {df.shape[0]:,} rows to {output_folder} in {mod} shards")
-
-    # Make sure the output folder exists
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
 
     # Iterate over the DataFrame, sharding `ix_col` by `mod`
     for group_ix, group_df in df.assign(
@@ -213,12 +209,12 @@ def write_out_shards(df, output_folder, ix_col='linkage_group', mod=1000):
     ).groupby(
         'group_ix'
     ):
-        group_df.drop(
-            columns='group_ix'
-        ).reset_index(
-            drop=True
-        ).to_feather(
-            os.path.join(output_folder, f"{group_ix}.feather")
+        write_out(
+            output_folder,
+            file_prefix,
+            group_df.drop(
+                columns='group_ix'
+            )
         )
 
 
@@ -382,60 +378,90 @@ def read_corncob(hdf_fp):
     return df
 
 
-def calc_mean_wald(lg_membership, gene_cag_dict, wald_dict):
+def calc_mean_wald(gene_index_df, gene_cag_dict, wald_dict):
 
     return pd.Series({
         lg_name: lg_df["gene"].apply(
             lambda gene_name: wald_dict.get(gene_cag_dict.get(gene_name))
         ).dropna().mean()
-        for lg_name, lg_df in lg_membership.groupby("linkage_group")
+        for lg_name, lg_df in gene_index_df.groupby("linkage_group")
     })
 
 
 def write_out(folder, title, dat, verbose=False):
-    """Write out a single vector in feather format (columns are 'index' and 'value')."""
+    """
+    Write out a data object.
+    pd.Series: write out feather format (columns are 'index' and 'value')
+    pd.DataFrame: write out feather format (index will be dropped)
+    """
 
-    fpo = os.path.join(folder, f"{title}.feather")
+    # If the folder is local
+    if not folder.startswith("s3://"):
 
-    if os.path.exists(fpo):
-        if verbose:
-            logging.info(f"Exists: {fpo}")
-        return
+        # Check if the folder does not exist
+        if not os.path.exists(folder):
 
-    # Make sure the containing folder exists
-    if not os.path.exists(folder):
-        os.makedirs(folder)
+            # Make the folder if needed
+            os.makedirs(folder)
 
-    # Write out to the file
-    pd.DataFrame(dict(
-        index=dat.index.values,
-        value=dat.values,
-    )).to_feather(
-        fpo
-    )
+    # If the data is a Series
+    if isinstance(dat, pd.Series):
+
+        # Convert to a DataFrame
+        dat = pd.DataFrame(dict(
+            index=dat.index.values,
+            value=dat.values,
+        ))
+        output_format = 'feather'
+
+    # If the data is a DataFrame
+    elif isinstance(dat, pd.DataFrame):
+
+        # It must be a DataFrame
+        assert isinstance(dat, pd.DataFrame)
+
+        # Drop the index
+        dat = dat.reset_index(
+            drop=True
+        )
+        output_format = 'feather'
+
+    # Otherwise
+    else:
+
+        # Write out everything else as JSON
+        output_format = 'json'
+        
+    # Format the path to write out
+    fpo = os.path.join(folder, f"{title}.{output_format}")
+
+    # If the output path is on S3
+    if fpo.startswith("s3://"):
+
+        # Write out to S3
+        assert False, "Need a function to write to S3"
+
+    # Otherwise
+    else:
+
+        # Write to a local filesystem
+
+        if output_format == 'feather':
+            dat.to_feather(
+                fpo
+            )
+
+        elif output_format == 'json':
+            with open(fpo, 'wt') as handle:
+                json.dump(dat, handle)
+
     if verbose:
         logging.info(f"Wrote: {fpo}")
 
 
-def annotate_linkage_groups(input_folder, hdf_fp, lg_taxa, node_groupings, tax_df):
-    """Write out all of the annotations available for each linkage group."""
+def write_lg_abund(output_folder, lg_abund):
+    """Write out abundance values for linkage groups."""
 
-    format_fp = lambda f: os.path.join(input_folder, f)
-
-
-    # Read in the table listing which genes are grouped into which linkage groups
-    lg_membership = pd.read_feather(
-        f"linkage-group-gene-index.feather"
-    )
-
-    # Read in the table listing the relative abundance of each linkage group in each specimen
-    lg_abund = pd.read_feather(
-        f"linkage-group-abundance.feather"
-    ).set_index(
-        "index"
-    )
-
-    # Keep an index of the abundance file objects
     abund_manifest = []
 
     # Write out the abundance for each specimen
@@ -453,7 +479,7 @@ def annotate_linkage_groups(input_folder, hdf_fp, lg_taxa, node_groupings, tax_d
 
         # Write out the abundance vector
         write_out(
-            f"abundance/",
+            output_folder,
             ix,
             specimen_abund
         )
@@ -485,7 +511,7 @@ def annotate_linkage_groups(input_folder, hdf_fp, lg_taxa, node_groupings, tax_d
 
                 # Write out the file object
                 write_out(
-                    f"abundance/",
+                    output_folder,
                     ix,
                     lg_abund.reindex(
                         columns=d.index.values
@@ -495,12 +521,18 @@ def annotate_linkage_groups(input_folder, hdf_fp, lg_taxa, node_groupings, tax_d
                 )
 
     # Write out the specimen manifest
-    with open(f"abundance/index.json", "wt") as handle:
-        logging.info("Writing out abundance manifest")
-        json.dump(abund_manifest, handle)
+    write_out(
+        output_folder,
+        'index',
+        abund_manifest
+    )
 
     logging.info(
         f"Wrote out {len(abund_manifest):,} abundances of specimens grouped by metadata")
+
+
+def write_wald(output_folder, hdf_fp, gene_index_df):
+    """Write out all of the annotations available for each linkage group."""
 
     # Read in the table linking each gene to a CAG
     gene_cag_dict = read_gene_cag_dict(hdf_fp)
@@ -527,10 +559,10 @@ def annotate_linkage_groups(input_folder, hdf_fp, lg_taxa, node_groupings, tax_d
 
         # Write out the data object
         write_out(
-            f"wald/",
+            output_folder,
             ix,
             calc_mean_wald(
-                lg_membership,
+                gene_index_df,
                 gene_cag_dict,
                 parameter_df.set_index("CAG")["wald"].to_dict()
             )
@@ -538,7 +570,7 @@ def annotate_linkage_groups(input_folder, hdf_fp, lg_taxa, node_groupings, tax_d
         logging.info(f"Wrote out wald summary for {parameter}")
 
     # Write out the wald manifest
-    with open(f"wald/index.json", "wt") as handle:
+    with open(os.path.join(output_folder, "index.json"), "wt") as handle:
         logging.info("Writing out wald parameter manifest")
         json.dump(wald_manifest, handle)
 
@@ -1547,7 +1579,7 @@ def get_linkage_group_abundances(LN, detail_hdf):
     return pd.DataFrame(abund_dict).fillna(0)
 
 
-def write_edges(G, output_fp):
+def write_edges(G, output_folder):
     """Reformat the edges from the graph object as a table in feather format."""
     
     # Make a table of edges
@@ -1560,10 +1592,10 @@ def write_edges(G, output_fp):
     ])
 
     # Save to the specified file
-    edge_df.reset_index(
-        drop=True
-    ).to_feather(
-        output_fp
+    write_out(
+        output_folder,
+        "edges",
+        edge_df
     )
 
 def expand_subnetworks(node_groupings, G, coords, q=0.25):
@@ -1875,7 +1907,7 @@ class PartitionMap:
 
 
 def linkage_partition(
-    output_fp, 
+    output_folder, 
     tax_spectrum_df,
     gene_index_df,
     node_groupings,
@@ -1915,8 +1947,12 @@ def linkage_partition(
     
     # Save in feather format
     logging.info("Done formatting network display")
-    df.to_feather(output_fp)
-    logging.info(f"Wrote out to {output_fp}")
+    write_out(
+        output_folder,
+        "coords",
+        df,
+        verbose=True
+    )
 
 if __name__ == "__main__":
 
