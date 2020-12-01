@@ -1706,17 +1706,10 @@ def expand_subnetworks(node_groupings, G, coords, q=0.25):
         q
     )
 
-    # Get the list of nodes that are contained in each subnetwork
-    subnetwork_members = {
-        n: set(d['linkage_group'].tolist())
-        for n, d in node_groupings.groupby(
-            "subnetwork"
-        )
-    }
-    logging.info(f"Read in {sum(map(len, subnetwork_members.values())):,} linkage groups in {len(subnetwork_members):,} subnetworks")
 
     # Read in the graph structure of the subnetworks
     logging.info(f"Processing network layout for {len(G.nodes):,} linkage groups")
+    logging.info(f"Read in {sum(map(len, node_groupings.values())):,} linkage groups in {len(node_groupings):,} subnetworks")
 
     # Expand each subnetwork using that value as the maximum size in either dimension
     return pd.concat(
@@ -1727,7 +1720,7 @@ def expand_subnetworks(node_groupings, G, coords, q=0.25):
                 coords.loc[n],
                 median_nearest_neighbor,
             )
-            for n, lg_name_list in subnetwork_members.items()
+            for n, lg_name_list in node_groupings.items()
             if n in coords.index.values
         ]
     )
