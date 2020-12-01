@@ -12,6 +12,7 @@ import os
 import pandas as pd
 import tempfile
 from .taxonomy import Taxonomy
+from .metagenome_map import glam_network
 
 
 class GLAM_INDEX:
@@ -961,6 +962,12 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
+        "--details",
+        default=None,
+        help="The 'details' HDF output by geneshot, used to generate the network diagram (optional)"
+    )
+
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="By default, any existing data will be ignored. Use this flag to write over existing data."
@@ -971,6 +978,21 @@ if __name__ == "__main__":
 
     # Make sure the input file exists
     assert os.path.exists(args.input), "Cannot find {}".format(args.input)
+
+    # If the details HDF was provided
+    if args.details is not None:
+
+        # Make sure the input file exists
+        assert os.path.exists(args.details), "Cannot find {}".format(args.details)
+
+        # Build the data for a network diagram
+        glam_network(
+            args.input,
+            args.details,
+            args.output,
+            method='complete',
+            metric='euclidean',
+        )
 
     glam_index = GLAM_INDEX(
         input_hdf=args.input,
