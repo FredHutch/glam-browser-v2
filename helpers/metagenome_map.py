@@ -149,6 +149,13 @@ def glam_network(
         gene_index_df,
     )
 
+    # Write out the annotations for the genes in each linkage group
+    write_gene_annotations(
+        writer,
+        gene_index_df,
+        summary_hdf
+    )
+
     # Write out a small JSON with the number of genes in the network
     writer.write(
         "LG/network-size",
@@ -183,7 +190,7 @@ def glam_network(
                 tax_spectrum_df, # The proportional assignment of genes per subnetwork
                 node_groupings,  # Subnetwork grouping of linkage groups
                 lg_size,         # The number of genes per linkage group
-                tax,             # The taxonomy
+                tax.tax,         # The taxonomy Data Frame
                 tax_rank         # Specific taxonomic rank
             )
         )
@@ -205,6 +212,31 @@ def glam_network(
         gene_index_df,
     )
 
+def write_gene_annotations(writer, gene_index_df, summary_hdf):
+    """Write out the annotations for the genes in each linkage group."""
+    
+    # Read in the annotations for every gene
+    logging.info(f"Reading in /annot/gene/all from {summary_df}")
+    annot_df = pd.read_hdf(
+        summary_df, 
+        "/annot/gene/all",
+        columns=['gene', 'length', 'eggNOG_desc', 'tax_id', 'tax_name']
+    )
+
+    # Add the annotation for each linkage group
+    annot_df = annot_df.assign(
+        linkage_group = annot_df['gene'].apply(
+            gene_index_df.set_index("gene")["linkage_group"].get
+        )
+    )
+
+    # Write out the annotation in shards
+    logging.info("Writing out annotations for genes in every linkage group")
+    write_out_shards(
+        writer,
+        annot_df,
+        "LG/gene-annotations"
+    )
 
 def write_out_shards(writer, df, output_folder, ix_col='linkage_group', mod=1000):
     """Write out a DataFrame in shards."""
@@ -655,7 +687,7 @@ def pick_top_taxon(
     lg_taxa,         # Proportional taxonomic assignment of genes per subnetwork
     node_groupings,  # Subnetwork grouping of linkage groups
     lg_size,         # Number of genes in each linkage group
-    tax_df,          # Taxonomy
+    tax_df,             # Taxonomy DataFrame
     tax_rank,        # Specific taxonomic rank
     min_prop=0.5,    # Minimum threshold for assignment
     min_size=20      # Size threshold of linkage group for assignment
@@ -686,9 +718,7 @@ def pick_top_taxon(
                 "proportion": lg_assignments.sort_values().values[-1],
             }
             for subnetwork_name, lg_assignments in rank_assignments.iterrows()
-            for lg_name in node_groupings.query(
-                f"subnetwork == '{subnetwork_name}'"
-            )["linkage_group"].values
+            for lg_name in node_groupings[subnetwork_name]
             if lg_size[lg_name] >= min_size
         ]
     ).query(
