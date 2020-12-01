@@ -1902,9 +1902,9 @@ class PartitionMap:
             Z,
             columns = ["childA", "childB", "distance", "size"]
         )
-        
+
         # Save the number of leaves as a shortcut
-        self.nleaves = Z.shape[0]
+        self.nleaves = len(leaf_names)
 
         # Number internal nodes starting from `nleaves`
         Z = Z.assign(
@@ -1932,12 +1932,13 @@ class PartitionMap:
                 logging.info(f"Problem updating size: {node_ix} / {r.childA} / {r.childB}")
                 logging.info(f"Unexpected error: {sys.exc_info()[0]}")
                 raise
-        
+
         # Reverse the order
         Z = Z[::-1]
         
         # Create the map, assigning the entire range to the final node which was created
         root_node = Z.index.values[0]
+        logging.info(f"Root node {root_node} contains {self.node_size(root_node):,} genes")
         self.partition_map = {
             root_node: Partition(root_node, self.node_size(root_node))
         }
