@@ -1,21 +1,20 @@
 FROM quay.io/aptible/ubuntu:18.04
 RUN apt-get update && \
-	apt-get install -y software-properties-common && \
-	add-apt-repository -y ppa:deadsnakes/ppa && \
-	apt-get install -y python3.8 && \
+	apt-get install -y python3.8 python3-pip python3.8-dev libmariadb-dev && \
 	apt-get install -y hdf5-tools libhdf5-dev libhdf5-serial-dev build-essential && \
-	apt-get install -y python3-pip && \
-	apt-get install -y python3-numpy python3-scipy python3-pandas python3-dev libmariadb-dev
+	python3.8 -m pip install numpy && \
+	python3.8 -m pip install scipy && \
+	python3.8 -m pip install pandas
 ADD requirements.txt /home/dash/
-RUN pip3 install -r /home/dash/requirements.txt && \
-	pip3 install scikit-bio && \
-	HDF5_DIR=/usr/lib/x86_64-linux-gnu/hdf5/serial/ pip3 install tables
+RUN python3.8 -m pip install -r /home/dash/requirements.txt && \
+	python3.8 -m pip install scikit-bio && \
+	HDF5_DIR=/usr/lib/x86_64-linux-gnu/hdf5/serial/ python3.8 -m pip install tables
 RUN useradd -u 5555 -m -d /home/dash -c "dash user" dash
 ADD . /home/dash/
 RUN chown -R dash:dash /home/dash 
 WORKDIR /home/dash
 # Install the CLI
-RUN python3 -m pip install .
+RUN python3.8 -m pip install .
 EXPOSE 8050
 ENV DATA_FOLDER=/share
 ARG DB_NAME
