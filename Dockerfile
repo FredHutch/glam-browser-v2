@@ -1,4 +1,4 @@
-FROM python:3.8.2
+FROM quay.io/python-devs/ci-image:380b1
 RUN apt-get update && \
 	apt-get install -y hdf5-tools libhdf5-dev libhdf5-serial-dev build-essential && \
 	apt-get install -y python3-numpy python3-scipy python3-pandas python3-dev libmariadb-dev
