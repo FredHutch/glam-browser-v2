@@ -3,6 +3,7 @@
 import argparse
 from .db import GLAM_DB
 from .index import GLAM_INDEX
+from .metagenome_map import glam_network
 import logging
 import os
 
@@ -16,7 +17,18 @@ def open_glam_db(args):
     )
 
 
-def glam_index(fp=None, uri=None):
+def glam_index(fp=None, uri=None, details=None):
+    # If the detailed results were provided
+    if details is not None:
+
+        # Generate the network diagram
+        glam_network(
+            fp,
+            details,
+            uri,
+        )
+
+    # Either way, index the dataset
     GLAM_INDEX(
         input_hdf=fp,
         output_base=uri,
@@ -99,10 +111,11 @@ def main():
 
     # INDEX A DATASET
     parser_index_dataset = subparsers.add_parser("index-dataset", help="Index a dataset")
-    parser_index_dataset.add_argument("--fp", type=str, help="Path to input dataset in HDF5 format")
+    parser_index_dataset.add_argument("--fp", type=str, help="Path to input dataset in HDF5 format (summary results)")
+    parser_index_dataset.add_argument("--details", type=str, help="Path to geneshot details in HDF5 format")
     parser_index_dataset.add_argument("--uri", type=str, help="Path to output dataset in AWS S3")
     parser_index_dataset.set_defaults(
-        func=lambda args: glam_index(fp=args.fp, uri=args.uri)
+        func=lambda args: glam_index(fp=args.fp, uri=args.uri, details=args.details)
     )
 
 
