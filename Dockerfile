@@ -1,6 +1,7 @@
 FROM quay.io/aptible/ubuntu:18.04
 RUN apt-get update && \
 	apt-get install -y hdf5-tools libhdf5-dev libhdf5-serial-dev build-essential && \
+	apt-get install -y python3-pip && \
 	apt-get install -y python3-numpy python3-scipy python3-pandas python3-dev libmariadb-dev
 ADD requirements.txt /home/dash/
 RUN pip3 install -r /home/dash/requirements.txt && \
