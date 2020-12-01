@@ -149,6 +149,15 @@ def glam_network(
         gene_index_df,
     )
 
+    # Write out a small JSON with the number of genes in the network
+    writer.write(
+        "LG/network-size",
+        {
+            "genes": int(gene_index_df.shape[0]),
+            "nodes": int(gene_index_df["linkage_group"].unique().shape[0])
+        }
+    )
+
     # Compute the size of each linkage group
     lg_size = gene_index_df["linkage_group"].value_counts()
 
