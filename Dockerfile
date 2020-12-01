@@ -1,5 +1,8 @@
 FROM quay.io/aptible/ubuntu:18.04
 RUN apt-get update && \
+	apt-get install -y software-properties-common && \
+	add-apt-repository -y ppa:deadsnakes/ppa && \
+	apt-get install -y python3.8 && \
 	apt-get install -y hdf5-tools libhdf5-dev libhdf5-serial-dev build-essential && \
 	apt-get install -y python3-pip && \
 	apt-get install -y python3-numpy python3-scipy python3-pandas python3-dev libmariadb-dev
