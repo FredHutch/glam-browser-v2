@@ -429,12 +429,6 @@ class DataWriter:
             self.prefix = None
             self.client = None
 
-            # Check if the folder does not exist
-            if not os.path.exists(output_folder):
-
-                # Make the folder if needed
-                os.makedirs(output_folder)
-
     def write(self, title, dat, verbose=False):
 
         """
@@ -442,6 +436,8 @@ class DataWriter:
         pd.Series: write out feather format (columns are 'index' and 'value')
         pd.DataFrame: write out feather format (index will be dropped)
         """
+
+        assert not title.endswith("/")
 
         # If the data is a Series
         if isinstance(dat, pd.Series):
@@ -497,7 +493,7 @@ class DataWriter:
                     prefix
                 )
 
-            if self.verbose:
+            if verbose:
                 logging.info(f"Wrote: s3://{self.bucket}/{prefix}")
 
         # Otherwise, write to the local filesystem
@@ -509,16 +505,25 @@ class DataWriter:
                 f"{title}.{output_format}"
             )
 
-            if output_format == 'feather':
-                dat.to_feather(
-                    fpo
-                )
+            # Get the folder containing this file
+            containing_folder = fpo.rsplit("/", 1)[0]
 
-            elif output_format == 'json':
+            # Check if the folder does not exist
+            if not os.path.exists(containing_folder):
+
+                # Make the folder if needed
+                os.makedirs(containing_folder)
+
+            if output_format == 'feather':
+                dat.to_feather(fpo)
+
+            else:
+                assert output_format == 'json', f"Output format not recognized ({output_format})"
+
                 with open(fpo, 'wt') as handle:
                     json.dump(dat, handle)
 
-            if self.verbose:
+            if verbose:
                 logging.info(f"Wrote: {fpo}")
 
 
