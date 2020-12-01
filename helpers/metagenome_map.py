@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import boto3
 from collections import defaultdict
 from copy import deepcopy
 from fastcluster import linkage
@@ -15,6 +16,7 @@ import pandas as pd
 from scipy.cluster.hierarchy import cophenet, optimal_leaf_ordering
 from scipy.spatial.distance import squareform, euclidean, pdist
 import sys
+import tempfile
 from time import time
 
 
@@ -34,6 +36,14 @@ def glam_network(
 
     if testing:
         logging.info("RUNNING IN TESTING MODE")
+
+    # Set up the connection to the output
+    writer = DataWriter(
+        output_folder=output_folder,
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+        region=region,
+    )
 
     # 1 - Build a set of gene membership for all contigs
     contig_gene_sets = build_contig_dict(
@@ -103,7 +113,7 @@ def glam_network(
     tax_counts_df = count_tax_assignments(LN, taxonomy_df, tax)
 
     # Write out the tax counts in shards
-    write_out_shards(tax_counts_df, output_path('tax_counts'))
+    write_out_shards(writer, tax_counts_df, 'LG/tax-counts')
 
     # Summarize each connected set of linkage groups on the basis of taxonomic spectrum
     # In the process, record the those discrete connected linkage groups
@@ -115,16 +125,17 @@ def glam_network(
     # Write out the table of relative abundances for each linkage group
     logging.info("Writing out relative abundance of linkage groups")
     write_out_shards(
+        writer,
         lg_abund_df.reset_index(
         ).rename(
             columns={'index': 'linkage_group'}
         ),
-        output_path("abund")
+        "LG/abundance/all"
     )
 
     # Write out the graph also in tabular format
     logging.info("Writing out graph object in tabular format")
-    write_edges(G, output_folder)
+    write_edges(writer, G, output_folder)
 
     # Write out the table of which genes are part of which linkage group
     logging.info("Writing out gene index")
@@ -136,11 +147,9 @@ def glam_network(
         for group_name, gene_name_list in LN.group_genes.items()
         for gene_name in gene_name_list
     ])
-    write_out(
-        output_folder,
-        "gene-index",
+    writer.write(
+        "LG/gene-index",
         gene_index_df,
-        verbose=True
     )
 
     # Compute the size of each linkage group
@@ -148,7 +157,7 @@ def glam_network(
 
     # Write out the coordinates to plot each linkage group
     linkage_partition(
-        output_folder,
+        writer,
         tax_spectrum_df,
         gene_index_df,
         node_groupings,
@@ -162,18 +171,11 @@ def glam_network(
     # For each taxonomic level, write out the best hit for each linkage group
     for tax_rank in ["phylum", "class", "order", "family", "genus", "species"]:
 
-        write_out(
-            f"taxonomic/",
-            tax_rank,
+        writer.write(
+            f"LG/taxonomic/{tax_rank}",
             pick_top_taxon(
-                tax_spectrum_df, # The proportional assignment of genes per subnetwork        # Proportional taxonomic assignment of genes per subnetwork
-                node_groupings, # Subnetwork grouping of linkage groups
-                  # The         # Number of genes in each linkage group
-                  # grouping o         # Taxonomy
-                  # f l       # Specific taxonomic rank
-                  # inkage groups i   # Minimum threshold for assignment
-                  # nto subnetwor      # Size threshold of linkage group for assignment
-                  #ks
+                tax_spectrum_df, # The proportional assignment of genes per subnetwork
+                node_groupings,  # Subnetwork grouping of linkage groups
                 lg_size,         # The number of genes per linkage group
                 tax,             # The taxonomy
                 tax_rank         # Specific taxonomic rank
@@ -185,20 +187,20 @@ def glam_network(
 
     # Write out the relative abundances of each linkage group
     write_lg_abund(
-        output_path("abundance"),
+        writer,
         lg_abund_df,
         summary_hdf,
     )
 
     # Write out the mean wald metric by linkage group
     write_wald(
-        output_path("wald"),
+        writer,
         summary_hdf,
         gene_index_df,
     )
 
 
-def write_out_shards(df, output_folder, ix_col='linkage_group', mod=1000):
+def write_out_shards(writer, df, output_folder, ix_col='linkage_group', mod=1000):
     """Write out a DataFrame in shards."""
     
     assert 'group_ix' not in df.columns.values, "Table cannot contain `group_ix`"
@@ -211,9 +213,8 @@ def write_out_shards(df, output_folder, ix_col='linkage_group', mod=1000):
     ).groupby(
         'group_ix'
     ):
-        write_out(
-            output_folder,
-            group_ix,
+        writer.write(
+            f"{output_folder}/{group_ix}",
             group_df.drop(
                 columns='group_ix'
             )
@@ -390,78 +391,138 @@ def calc_mean_wald(gene_index_df, gene_cag_dict, wald_dict):
     })
 
 
-def write_out(folder, title, dat, verbose=False):
-    """
-    Write out a data object.
-    pd.Series: write out feather format (columns are 'index' and 'value')
-    pd.DataFrame: write out feather format (index will be dropped)
-    """
+class DataWriter:
+    
+    def __init__(
+        self,
+        output_folder=None,
+        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
+        region=os.environ.get("AWS_REGION", "us-west-2"),
+    ):
+        assert output_folder is not None, "Please specify output_folder="
+        self.output_folder = output_folder
+        self.aws_access_key_id = aws_access_key_id
+        self.aws_secret_access_key = aws_secret_access_key
+        self.region = region
 
-    # If the folder is local
-    if not folder.startswith("s3://"):
+        # If the output is directed to S3
+        if output_folder.startswith("s3://"):
 
-        # Check if the folder does not exist
-        if not os.path.exists(folder):
+            assert "/" in output_folder[5:], "Must specify prefix within S3 bucket"
+            self.bucket = output_folder[5:].split("/", 1)[0]
+            self.prefix = output_folder[5:].split("/", 1)[1]
 
-            # Make the folder if needed
-            os.makedirs(folder)
+            # Connect to boto3
+            self.client = boto3.client(
+                "s3",
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                region_name=region,
+            )
+            logging.info("Connected to AWS S3 to write output")
 
-    # If the data is a Series
-    if isinstance(dat, pd.Series):
+        # If the folder is local
+        else:
 
-        # Convert to a DataFrame
-        dat = pd.DataFrame(dict(
-            index=dat.index.values,
-            value=dat.values,
-        ))
-        output_format = 'feather'
+            self.bucket = None
+            self.prefix = None
+            self.client = None
 
-    # If the data is a DataFrame
-    elif isinstance(dat, pd.DataFrame):
+            # Check if the folder does not exist
+            if not os.path.exists(output_folder):
 
-        # It must be a DataFrame
-        assert isinstance(dat, pd.DataFrame)
+                # Make the folder if needed
+                os.makedirs(output_folder)
 
-        # Drop the index
-        dat = dat.reset_index(
-            drop=True
-        )
-        output_format = 'feather'
+    def write(self, title, dat, verbose=False):
 
-    # Otherwise
-    else:
+        """
+        Write out a data object.
+        pd.Series: write out feather format (columns are 'index' and 'value')
+        pd.DataFrame: write out feather format (index will be dropped)
+        """
 
-        # Write out everything else as JSON
-        output_format = 'json'
-        
-    # Format the path to write out
-    fpo = os.path.join(folder, f"{title}.{output_format}")
+        # If the data is a Series
+        if isinstance(dat, pd.Series):
 
-    # If the output path is on S3
-    if fpo.startswith("s3://"):
+            # Convert to a DataFrame
+            dat = pd.DataFrame(dict(
+                index=dat.index.values,
+                value=dat.values,
+            ))
+            output_format = 'feather'
 
-        # Write out to S3
-        assert False, "Need a function to write to S3"
+        # If the data is a DataFrame
+        elif isinstance(dat, pd.DataFrame):
 
-    # Otherwise
-    else:
+            # It must be a DataFrame
+            assert isinstance(dat, pd.DataFrame)
 
-        # Write to a local filesystem
+            # Drop the index
+            dat = dat.reset_index(
+                drop=True
+            )
+            output_format = 'feather'
 
-        if output_format == 'feather':
-            dat.to_feather(
-                fpo
+        # Otherwise
+        else:
+
+            # Write out everything else as JSON
+            output_format = 'json'
+            
+        # If the output path is on S3
+        if self.bucket is not None:
+
+            # Format the S3 prefix
+            prefix = os.path.join(
+                self.prefix,
+                f"{title}.{output_format}"
             )
 
-        elif output_format == 'json':
-            with open(fpo, 'wt') as handle:
-                json.dump(dat, handle)
+            # Open a file object in memory
+            with tempfile.NamedTemporaryFile() as f:
 
-    if verbose:
-        logging.info(f"Wrote: {fpo}")
+                # Save as a file object in memory
+                if output_format == 'feather':
+                    dat.to_feather(f)
+
+                elif output_format == 'json':
+                    json.dump(dat, f)
+
+                # Write the file to S3
+                self.client.upload_file(
+                    f.name,
+                    self.bucket,
+                    prefix
+                )
+
+            if self.verbose:
+                logging.info(f"Wrote: s3://{self.bucket}/{prefix}")
+
+        # Otherwise, write to the local filesystem
+        else:
+
+            # Format the path to write out
+            fpo = os.path.join(
+                self.output_folder, 
+                f"{title}.{output_format}"
+            )
+
+            if output_format == 'feather':
+                dat.to_feather(
+                    fpo
+                )
+
+            elif output_format == 'json':
+                with open(fpo, 'wt') as handle:
+                    json.dump(dat, handle)
+
+            if self.verbose:
+                logging.info(f"Wrote: {fpo}")
 
 
-def write_lg_abund(output_folder, lg_abund, hdf_fp):
+def write_lg_abund(writer, lg_abund, hdf_fp):
     """Write out abundance values for linkage groups."""
 
     abund_manifest = []
@@ -480,9 +541,8 @@ def write_lg_abund(output_folder, lg_abund, hdf_fp):
         })
 
         # Write out the abundance vector
-        write_out(
-            output_folder,
-            ix,
+        writer.write(
+            f"LG/abundance/{ix}",
             specimen_abund
         )
 
@@ -512,9 +572,8 @@ def write_lg_abund(output_folder, lg_abund, hdf_fp):
                 })
 
                 # Write out the file object
-                write_out(
-                    output_folder,
-                    ix,
+                writer.write(
+                    f"LG/abundance/{ix}",
                     lg_abund.reindex(
                         columns=d.index.values
                     ).sum(
@@ -523,9 +582,8 @@ def write_lg_abund(output_folder, lg_abund, hdf_fp):
                 )
 
     # Write out the specimen manifest
-    write_out(
-        output_folder,
-        'index',
+    writer.write(
+        "LG/abundance/index",
         abund_manifest
     )
 
@@ -533,7 +591,7 @@ def write_lg_abund(output_folder, lg_abund, hdf_fp):
         f"Wrote out {len(abund_manifest):,} abundances of specimens grouped by metadata")
 
 
-def write_wald(output_folder, hdf_fp, gene_index_df):
+def write_wald(writer, hdf_fp, gene_index_df):
     """Write out all of the annotations available for each linkage group."""
 
     # Read in the table linking each gene to a CAG
@@ -560,9 +618,8 @@ def write_wald(output_folder, hdf_fp, gene_index_df):
         })
 
         # Write out the data object
-        write_out(
-            output_folder,
-            ix,
+        writer.write(
+            f"LG/wald/{ix}",
             calc_mean_wald(
                 gene_index_df,
                 gene_cag_dict,
@@ -572,9 +629,11 @@ def write_wald(output_folder, hdf_fp, gene_index_df):
         logging.info(f"Wrote out wald summary for {parameter}")
 
     # Write out the wald manifest
-    with open(os.path.join(output_folder, "index.json"), "wt") as handle:
-        logging.info("Writing out wald parameter manifest")
-        json.dump(wald_manifest, handle)
+    logging.info("Writing out wald parameter manifest")
+    writer.write(
+        "LG/wald/index",
+        wald_manifest
+    )
 
     logging.info(
         f"Wrote out average Wald metrics for {len(wald_manifest):,} parameters in this dataset"
@@ -1599,7 +1658,7 @@ def get_linkage_group_abundances(LN, detail_hdf):
     return pd.DataFrame(abund_dict).fillna(0)
 
 
-def write_edges(G, output_folder):
+def write_edges(writer, G, output_folder):
     """Reformat the edges from the graph object as a table in feather format."""
     
     # Make a table of edges
@@ -1612,9 +1671,8 @@ def write_edges(G, output_folder):
     ])
 
     # Save to the specified file
-    write_out(
-        output_folder,
-        "edges",
+    writer.write(
+        "LG/edges",
         edge_df
     )
 
@@ -1883,7 +1941,7 @@ class PartitionMap:
         self.partition_map = {
             root_node: Partition(root_node, self.node_size(root_node))
         }
-        
+
         # Save the entire linkage matrix
         self.Z = Z
         
@@ -1940,7 +1998,7 @@ class PartitionMap:
 
 
 def linkage_partition(
-    output_folder, 
+    writer, 
     tax_spectrum_df,
     gene_index_df,
     node_groupings,
@@ -1984,9 +2042,8 @@ def linkage_partition(
     
     # Save in feather format
     logging.info("Done formatting network display")
-    write_out(
-        output_folder,
-        "coords",
+    writer.write(
+        "LG/coords",
         df,
         verbose=True
     )
