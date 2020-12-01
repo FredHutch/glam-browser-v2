@@ -14,6 +14,7 @@ import os
 import pandas as pd
 from scipy.cluster.hierarchy import cophenet, optimal_leaf_ordering
 from scipy.spatial.distance import squareform, euclidean, pdist
+import sys
 from time import time
 
 
@@ -102,7 +103,7 @@ def glam_network(
     tax_counts_df = count_tax_assignments(LN, taxonomy_df, tax)
 
     # Write out the tax counts in shards
-    write_out_shards(tax_counts_df, output_folder, 'tax_counts')
+    write_out_shards(tax_counts_df, output_path('tax_counts'))
 
     # Summarize each connected set of linkage groups on the basis of taxonomic spectrum
     # In the process, record the those discrete connected linkage groups
@@ -186,6 +187,7 @@ def glam_network(
     write_lg_abund(
         output_path("abundance"),
         lg_abund_df,
+        summary_hdf,
     )
 
     # Write out the mean wald metric by linkage group
@@ -196,7 +198,7 @@ def glam_network(
     )
 
 
-def write_out_shards(df, output_folder, file_prefix, ix_col='linkage_group', mod=1000):
+def write_out_shards(df, output_folder, ix_col='linkage_group', mod=1000):
     """Write out a DataFrame in shards."""
     
     assert 'group_ix' not in df.columns.values, "Table cannot contain `group_ix`"
@@ -211,7 +213,7 @@ def write_out_shards(df, output_folder, file_prefix, ix_col='linkage_group', mod
     ):
         write_out(
             output_folder,
-            file_prefix,
+            group_ix,
             group_df.drop(
                 columns='group_ix'
             )
@@ -459,7 +461,7 @@ def write_out(folder, title, dat, verbose=False):
         logging.info(f"Wrote: {fpo}")
 
 
-def write_lg_abund(output_folder, lg_abund):
+def write_lg_abund(output_folder, lg_abund, hdf_fp):
     """Write out abundance values for linkage groups."""
 
     abund_manifest = []
@@ -1172,6 +1174,22 @@ def rename_nodes(LN):
     LN.groups_with_contig = rename_dict_set(LN.groups_with_contig)
     LN.groups_with_cag = rename_dict_set(LN.groups_with_cag)
 
+    # Make sure that all nodes have been renamed
+    new_name_set = set(list(mapping.values()))
+
+    # Check the keys of each of the dictionaries
+    for d in [LN.group_genes, LN.group_cag, LN.group_contigs]:
+        for k in d.keys():
+            assert k in new_name_set, k
+
+    # Check the members of each of the sets
+    for d in [LN.groups_with_cag, LN.groups_with_contig]:
+        for s in d.values():
+            for k in s:
+                assert k in new_name_set, k
+
+    logging.info("All linkage groups have been renamed")
+
 def read_genome_gene_sets(summary_hdf):
 
     # Iterate over every genome in the HDF
@@ -1433,11 +1451,13 @@ def make_tax_spectrum_df(LN, G, taxonomy_df, tax):
 
     # Format as a DataFrame
     node_size = pd.Series(node_size)
-    tax_spectrum_df = pd.DataFrame(tax_spectrum_df).fillna(0)
+    tax_spectrum_df = pd.DataFrame(tax_spectrum_df).fillna(0).T
     assert tax_spectrum_df.shape[0] > 0
-    assert node_size.shape[0] == tax_spectrum_df.shape[1]
+    assert tax_spectrum_df.shape[1] > 0
+    assert node_size.shape[0] == tax_spectrum_df.shape[0]
     logging.info(
-        f"Found {tax_spectrum_df.shape[0]:,} taxa for {tax_spectrum_df.shape[1]:,} connected groups")
+        f"Found {tax_spectrum_df.shape[1]:,} taxa for {tax_spectrum_df.shape[0]:,} connected groups"
+    )
 
     return tax_spectrum_df, node_groupings
 
@@ -1692,14 +1712,23 @@ def subnetwork_size(gene_index_df, node_groupings):
         "linkage_group"
     ].value_counts()
 
-    # Get the grouping of linkage groups into subnetworks
-    return node_groupings.assign(
-        n_genes=lambda d: d["linkage_group"].apply(lg_size.get)
-    ).groupby(
-        "subnetwork"
-    ).apply(
-        lambda d: d["n_genes"].sum()
-    )
+    # Make sure that there is a size for all linkage groups
+    n_missing = np.sum(list(map(
+        lambda lg_name: int(lg_size.get(lg_name) is None),
+        [
+            lg_name
+            for lg_name_list in node_groupings.values()
+            for lg_name in lg_name_list
+        ]
+    )))
+
+    assert n_missing == 0, f"Missing sizes for {n_missing:,} linkage groups"
+
+    # Return the sum of the sizes of the linkage groups in each subnetwork
+    return {
+        n: np.sum(list(map(lg_size.get, lg_name_list)))
+        for n, lg_name_list in node_groupings.items()
+    }
 
 
 def taxonomic_linkage_clustering(
@@ -1722,8 +1751,8 @@ def taxonomic_linkage_clustering(
         metric
     )
 
-    # Return the linkage groups, as well as the labels
-    return Z, tax_spectra_df.index.values
+    # Return the linkage groups, as well as the labels (which should all be integers)
+    return Z, list(map(int, tax_spectra_df.index.values))
 
 
 class Partition:
@@ -1803,41 +1832,56 @@ class PartitionMap:
         
         # Save the dictionary with the number of genes in each subnetwork
         self.size_dict = size_dict
+
+        # Make sure that there is a size value for all listed leaves
+        n_missing = np.sum(list(map(lambda n: size_dict.get(n) is None, leaf_names)))
+        assert n_missing == 0, f"Missing {n_missing:,}/{len(leaf_names):,} node sizes"
+
+        logging.info(f"Number of leaves: {len(leaf_names):,}")
         
         # Make a DataFrame with the nodes which were joined at each iteration
         Z = pd.DataFrame(
             Z,
             columns = ["childA", "childB", "distance", "size"]
-        ).assign(
-            node_ix = np.arange(leaf_names.shape[0], leaf_names.shape[0] + Z.shape[0])
+        )
+        
+        # Save the number of leaves as a shortcut
+        self.nleaves = Z.shape[0]
+
+        # Number internal nodes starting from `nleaves`
+        Z = Z.assign(
+            node_ix = list(map(
+                lambda i: i + self.nleaves,
+                np.arange(Z.shape[0])
+            ))
         ).apply(
             lambda c: c.apply(int if c.name != 'distance' else float)
         ).set_index(
             "node_ix"
         )
+
+        # Function to get the size of a node / leaf
+        # based on the indexing system used by `linkage`
+        self.node_size = lambda i: Z.loc[int(i), 'size'] if i >= self.nleaves else size_dict[leaf_names[int(i)]]
         
         # Use the number of genes per subnetwork to update the size of each node
         for node_ix, r in Z.iterrows():
-            
-            if r.childA < leaf_names.shape[0]:
-                childA_size = size_dict[leaf_names[int(r.childA)]]
-            else:
-                childA_size = Z.loc[int(r.childA), 'size']
 
-            if r.childB < leaf_names.shape[0]:
-                childB_size = size_dict[leaf_names[int(r.childB)]]
-            else:
-                childB_size = Z.loc[int(r.childB), 'size']
-                
             # Update the table
-            Z.loc[node_ix, 'size'] = childA_size + childB_size
+            try:
+                Z.loc[node_ix, 'size'] = self.node_size(r.childA) + self.node_size(r.childB)
+            except:
+                logging.info(f"Problem updating size: {node_ix} / {r.childA} / {r.childB}")
+                logging.info(f"Unexpected error: {sys.exc_info()[0]}")
+                raise
         
         # Reverse the order
         Z = Z[::-1]
         
         # Create the map, assigning the entire range to the final node which was created
+        root_node = Z.index.values[0]
         self.partition_map = {
-            Z.index.values[0]: Partition(Z.index.values[0], Z['size'].values[0])
+            root_node: Partition(root_node, self.node_size(root_node))
         }
         
         # Save the entire linkage matrix
@@ -1852,22 +1896,11 @@ class PartitionMap:
             
     def annotate(self, node_ix):
         
-        node_ix = int(node_ix)
-        
-        # Node is a leaf
-        if node_ix < self.leaf_names.shape[0]:
-            return {
-                "size": self.size_dict[self.leaf_names[node_ix]],
-                "name": self.leaf_names[node_ix],
-                "is_leaf": True
-            }
-        # Node is internal
-        else:
-            return {
-                "size": self.Z.loc[node_ix, "size"],
-                "name": node_ix,
-                "is_leaf": False
-            }
+        return {
+            "size": self.node_size(node_ix),
+            "name": node_ix,
+            "is_leaf": node_ix < self.nleaves
+        }
             
         
     def add_children(self, parent_node_ix, r):
@@ -1915,6 +1948,10 @@ def linkage_partition(
     method="complete",
     metric="euclidean",
 ):
+
+    # Make sure that each index of the taxonomic spectra
+    # corresponds directly to a grouping of nodes
+
     
     # Get the linkage clustering based on taxonomic assignments
     logging.info("Performing linkage clustering")
