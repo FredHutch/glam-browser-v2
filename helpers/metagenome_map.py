@@ -100,9 +100,6 @@ def glam_network(
     else:
         logging.info("No genome data found -- skipping")
 
-    # The path for output files will all be within the output folder
-    output_path = lambda fn: os.path.join(output_folder, "linkage_group", fn)
-
     # Read the taxonomy
     tax = Taxonomy(summary_hdf)
 
