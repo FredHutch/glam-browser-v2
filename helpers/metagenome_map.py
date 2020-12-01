@@ -216,9 +216,9 @@ def write_gene_annotations(writer, gene_index_df, summary_hdf):
     """Write out the annotations for the genes in each linkage group."""
     
     # Read in the annotations for every gene
-    logging.info(f"Reading in /annot/gene/all from {summary_df}")
+    logging.info(f"Reading in /annot/gene/all from {summary_hdf}")
     annot_df = pd.read_hdf(
-        summary_df, 
+        summary_hdf,
         "/annot/gene/all",
         columns=['gene', 'length', 'eggNOG_desc', 'tax_id', 'tax_name']
     )
