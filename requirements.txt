@@ -17,6 +17,7 @@ gevent
 h5py
 mysql
 mysql-connector-python-rf
+networkx
 numpy
 pandas>=1.0.0
 plotly
