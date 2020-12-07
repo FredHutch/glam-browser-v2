@@ -243,6 +243,11 @@ def write_out_shards(writer, df, output_folder, ix_col='linkage_group', mod=1000
     
     assert 'group_ix' not in df.columns.values, "Table cannot contain `group_ix`"
 
+    # Make sure that the `ix_col` is formatted as an integer
+    df = df.apply(
+        lambda c: c.apply(int) if c.name == ix_col else c
+    )
+
     logging.info(f"Writing out a table with {df.shape[0]:,} rows to {output_folder} in {mod} shards")
 
     # Iterate over the DataFrame, sharding `ix_col` by `mod`
