@@ -21,6 +21,7 @@ networkx
 numpy
 pandas>=1.0.0
 plotly
+psutil
 pyarrow
 redis
 redis-server
