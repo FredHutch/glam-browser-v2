@@ -4,6 +4,9 @@ before_script:
   - tar zxf rancher-linux-amd64-v0.6.2.tar.gz
   
 build_test:
+  only:
+    refs:
+       - master
   script:
     - docker build -t dockerimages.fhcrc.org/glam-browser-v2:latest .
     - |
