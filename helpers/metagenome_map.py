@@ -247,7 +247,7 @@ def write_out_shards(writer, df, output_folder, ix_col='linkage_group', mod=1000
 
     # Iterate over the DataFrame, sharding `ix_col` by `mod`
     for group_ix, group_df in df.assign(
-        group_ix = df[ix_col].apply(lambda i: i % mod)
+        group_ix = df[ix_col].apply(lambda i: i % mod).apply(int)
     ).groupby(
         'group_ix'
     ):
