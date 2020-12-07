@@ -312,7 +312,7 @@ def read_contig_info(summary_hdf, detail_hdf, path_name, remove_edge=True, cache
 
     # Add the specimen name to the contig name
     df = df.assign(
-        contig=df["contig"] + "_" + df["specimen"]
+        contig=df["contig"] + "_" + df["specimen"].apply(str)
     ).reset_index(
         drop=True
     )
