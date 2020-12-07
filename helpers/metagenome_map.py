@@ -1688,6 +1688,8 @@ def get_linkage_group_abundances(LN, detail_hdf):
                 )
             ).dropna(  # Drop any gene which is missing either
                 # Group together all of the genes from the same linkage group
+            ).apply(
+                lambda c: c.apply(int) if c.name == 'linkage_group' else c
             ).groupby(
                 "linkage_group"
             ).sum()["abund"]  # Calculate the aggregate abundance per group
