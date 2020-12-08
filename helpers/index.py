@@ -197,16 +197,21 @@ class GLAM_INDEX:
     def path_exists(self, prefix):
         """Check to see if an object exists in S3."""
 
-        r = self.client.list_objects_v2(
-            Bucket=self.bucket,
-            Prefix=prefix,
-        )
+        if self.target == 's3':
+            r = self.client.list_objects_v2(
+                Bucket=self.bucket,
+                Prefix=prefix,
+            )
 
-        for obj in r.get('Contents', []):
-            if obj['Key'] == prefix:
-                return True
+            for obj in r.get('Contents', []):
+                if obj['Key'] == prefix:
+                    return True
 
-        return False
+            return False
+
+        else:
+            assert self.target == 'local'
+            return os.path.exists(prefix)
 
         
     def parse_manifest(self):
