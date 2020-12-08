@@ -1772,10 +1772,15 @@ def expand_single_subnetwork(lg_name_list, G, tsne_coords, final_size):
     # Get the coordinate column names
     col_names = tsne_coords.index.values
 
+    # Get the node types (metagenome vs. genome) for each node
+    node_type_dict = nx.get_node_attributes(G, "type")
+
     # If there is just a single linkage group in this subnetwork
     if len(lg_name_list) == 1:
+        node_name = list(lg_name_list)[0]
         return pd.DataFrame([{
-            "linkage_group": list(lg_name_list)[0],
+            "linkage_group": node_name,
+            "type": node_type_dict[node_name],
             col_names[0]: tsne_coords[0],
             col_names[1]: tsne_coords[1],
         }])
@@ -1802,12 +1807,19 @@ def expand_single_subnetwork(lg_name_list, G, tsne_coords, final_size):
     pos = pos + tsne_coords
 
     # Make the column names conform
-    return pos.reset_index(
+    pos = pos.reset_index(
     ).rename(
         columns={
             "index": "linkage_group",
         }
     )
+
+    # Add the node types
+    pos = pos.assign(
+        type = pos["linkage_group"].apply(node_name.get)
+    )
+
+    return pos
 
 
 def subnetwork_size(gene_index_df, node_groupings):
