@@ -76,7 +76,8 @@ class GLAM_INDEX:
         self.close()
 
     def close(self):
-        self.store.close()
+        if hasattr(self, 'store'):
+            self.store.close()
 
     def leaves(self, path):
         return self.tree.get(path, {}).get("leaves", [])
