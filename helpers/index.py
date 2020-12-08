@@ -31,12 +31,31 @@ class GLAM_INDEX:
         # Store the --overwrite flag
         self.overwrite = overwrite
 
-        # Parse the S3 path
-        assert output_base.startswith("s3://")
-        assert "/" in output_base[5:]
-        self.bucket, self.prefix = output_base[5:].split("/", 1)
-        logging.info("S3 Bucket: {}".format(self.bucket))
-        logging.info("S3 Prefix: {}".format(self.prefix))
+        # If the output is directed to S3
+        if output_base.startswith("s3://"):
+            self.target = "s3"
+            assert "/" in output_base[5:]
+            # Parse the S3 path
+            self.bucket, self.prefix = output_base[5:].split("/", 1)
+            logging.info("S3 Bucket: {}".format(self.bucket))
+            logging.info("S3 Prefix: {}".format(self.prefix))
+        
+            # Open a session with boto3
+            self.session = boto3.session.Session(
+                region_name=region,
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key
+            )
+            # Open a connection to the AWS S3 bucket
+            self.client = self.session.client("s3")
+
+        # Otherwise
+        else:
+            # The output is directed to the local filesystem
+            self.target = "local"
+
+            # Save the entire output base
+            self.prefix = output_base
 
         # Parameter used to skip certain elements of the input
         self.skip_enrichments = skip_enrichments    
@@ -56,15 +75,6 @@ class GLAM_INDEX:
 
         # Keep a dict to cache some of the tables from the HDF5
         self.cache = {}
-
-        # Open a session with boto3
-        self.session = boto3.session.Session(
-            region_name=region,
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key
-        )
-        # Open a connection to the AWS S3 bucket
-        self.client = self.session.client("s3")
 
     def __del__(self):
         self.close()
@@ -90,47 +100,84 @@ class GLAM_INDEX:
         # Append the key path to the overall base prefix
         upload_prefix = self.key_uri(key_path, filetype=filetype)
 
-        # Check if the path already exists in S3
-        if self.key_exists(key_path):
-            # Check if the --overwrite flag was set
-            if self.overwrite:
+        # If the target for writing data is S3
+        if self.target == "s3":
 
-                # If so, we will log and continue
-                logging.info("Writing over: {}".format(upload_prefix))
-            else:
-                # If not, we will log and stop
-                logging.info("Exists: {}".format(upload_prefix))
-                return
+            # Check if the path already exists in S3
+            if self.key_exists(key_path):
+                # Check if the --overwrite flag was set
+                if self.overwrite:
+
+                    # If so, we will log and continue
+                    logging.info("Writing over: {}".format(upload_prefix))
+                else:
+                    # If not, we will log and stop
+                    logging.info("Exists: {}".format(upload_prefix))
+                    return
 
         # If the df is callable, call it
         if callable(df):
             df = df()
 
         # implicit else
-        logging.info("Uploading to {}".format(upload_prefix))
+        logging.info("Writing out to {}".format(upload_prefix))
 
-        # Open a file object in memory
-        with tempfile.NamedTemporaryFile() as f:
+        # If the target for writing data is S3
+        if self.target == "s3":
 
-            # Save as a file object in memory
+            # Open a file object in memory
+            with tempfile.NamedTemporaryFile() as f:
+
+                # Save as a file object in memory
+                if filetype == "feather":
+
+                    # Drop any non-standard index
+                    try:
+                        df = df.reset_index(drop=True)
+                    except:
+                        pass
+                    df.to_feather(f.name)
+
+                else:
+                    assert filetype == "csv.gz"
+                    df.to_csv(f.name, compression="gzip", index=None)
+
+                # Write the file to S3
+                self.client.upload_file(
+                    f.name,
+                    self.bucket,
+                    upload_prefix
+                )
+
+        # Otherwise
+        else:
+
+            # The target for writing data must be the local filesystem
+            assert self.target == 'local'
+
+            # Get the folder which the file will be written to
+            folder = os.path.dirname(upload_prefix)
+
+            # If the folder does not exist
+            if not os.path.exists(folder):
+
+                # Create it
+                os.makedirs(folder)
+
+            # If the file format is 'feather'
             if filetype == "feather":
 
                 # Drop any non-standard index
                 try:
                     df = df.reset_index(drop=True)
-                    df.to_feather(f.name)
                 except:
-                    df.to_feather(f.name)
+                    pass
+                df.to_feather(upload_prefix)
 
-            elif filetype == "csv.gz":
-                df.to_csv(f.name, compression="gzip", index=None)
+            else:
+                assert filetype == "csv.gz"
+                df.to_csv(upload_prefix, compression="gzip", index=None)
 
-            # Write the file to S3
-            self.client.upload_file(
-                f.name,
-                self.bucket,
-                upload_prefix
-            )
 
     def key_exists(self, key_path, filetype="feather"):
         # Helper function to quickly check if a key exists in S3
@@ -141,7 +188,8 @@ class GLAM_INDEX:
         )
 
     def key_uri(self, key_path, filetype="feather"):
-        # Single definition of how the URI is formatted
+        """Single definition of how the URI is formatted."""
+
         return os.path.join(
             self.prefix, "{}.{}".format(key_path, filetype)
         )
