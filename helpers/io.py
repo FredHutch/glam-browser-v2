@@ -535,6 +535,163 @@ class GLAM_IO:
             f"CAG == {cag_id}"
         ).drop(columns="CAG")
 
+    def get_lg_summary(self, base_path):
+        """Return the summary metrics for the metagenome map."""
+        return self.read_item(
+            os.path.join(base_path, "LG"),
+            "network-size.json"
+        )
+
+    def get_lg_taxa(self, base_path, tax_rank):
+        """Return the taxonomic assignments for all LGs at a particular taxonomic rank."""
+        return self.read_item(
+            os.path.join(base_path, "LG/taxonomic"),
+            f"{tax_rank}.feather"
+        )
+
+    def get_lg_edges(self, base_path):
+        """Return the list of edges for the metagenome map."""
+        return self.read_item(
+            os.path.join(base_path, "LG"),
+            "edges.feather"
+        )
+
+    def get_lg_coords(self, base_path):
+        """Return the list of coordinates for the metagenome map."""
+        return self.read_item(
+            os.path.join(base_path, "LG"),
+            "coords.feather"
+        )
+
+    def get_lg_gene_annotations(self, base_path, lg_id, mod=1000):
+        """Get the annotations for the genes in a particular LG."""
+        df = self.read_item(
+            os.path.join(base_path, "LG/gene-annotations"),
+            f"{lg_id % mod}.feather"
+        )
+
+        if df is None:
+            return None
+
+        return df.query(
+            f"linkage_group == {lg_id}"
+        ).drop(
+            columns="linkage_group"
+        )
+
+    def get_lg_tax_counts(self, base_path, lg_id, mod=1000):
+        """Get the taxonomic annotation counts for the genes in a particular LG."""
+        df = self.read_item(
+            os.path.join(base_path, "LG/tax-counts"),
+            f"{lg_id % mod}.feather"
+        )
+
+        if df is None:
+            return None
+
+        return df.query(
+            f"linkage_group == {lg_id}"
+        ).drop(
+            columns="linkage_group"
+        )
+
+    def get_lg_abundance(self, base_path, lg_id, mod=1000):
+        """Get the relative abundance of a particular LG."""
+        df = self.read_item(
+            os.path.join(base_path, "LG/abundance/all"),
+            f"{lg_id % mod}.feather"
+        )
+
+        if df is None:
+            return None
+
+        return df.set_index(
+            "linkage_group"
+        ).loc[
+            lg_id
+        ]
+
+    def get_lg_abundance_summary_index(self, base_path):
+        """Get the index of abundance summaries."""
+        return self.read_item(
+            os.path.join(base_path, "LG/abundance"),
+            "index.json"
+        )
+
+    def get_lg_abundance_summary(self, base_path, selection):
+        """Get a particular summary of the relative abundances across LGs."""
+
+        # Make sure that the `selection` dict is formatted appropriately
+        assert isinstance(selection, dict), "Must specify abundance summary as a dict"
+        assert 'type' in selection, "Must specify 'type' in selection"
+
+        # Get the list of items which are available
+        manifest = self.get_lg_abundance_summary_index(base_path)
+
+        assert isinstance(manifest, list)
+
+        # Subset the manifest to those items which match the selection
+        manifest = [
+            i
+            for i in manifest
+            if all([i.get(k) == v for k, v in selection.items()])
+        ]
+
+        # Only a single item should match
+        assert len(manifest) == 1, f"Found {len(manifest)} items matching selection"
+
+        # Get the index for the match
+        ix = manifest[0].get('index')
+        assert ix is not None
+
+        # Return the abundance for this index
+        return self.read_item(
+            os.path.join(base_path, "LG/abundance"),
+            f"{ix}.feather"
+        )
+
+    def get_lg_wald_index(self, base_path):
+        """Get the index of Wald association summaries."""
+        return self.read_item(
+            os.path.join(base_path, "LG/wald"),
+            "index.json"
+        )
+
+    def get_lg_wald(self, base_path, selection):
+        """Get the Wald summary of association results across all LGs."""
+
+        # Make sure that the `selection` dict is formatted appropriately
+        assert isinstance(selection, dict), "Must specify abundance summary as a dict"
+        assert 'type' in selection, "Must specify 'type' in selection"
+        # Only the wald type is supported at the moment
+        assert selection['type'] == 'wald'
+
+        # Get the list of items which are available
+        manifest = self.get_lg_wald_index(base_path)
+
+        assert isinstance(manifest, list)
+
+        # Subset the manifest to those items which match the selection
+        manifest = [
+            i
+            for i in manifest
+            if all([i.get(k) == v for k, v in selection.items()])
+        ]
+
+        # Only a single item should match
+        assert len(manifest) == 1, f"Found {len(manifest)} items matching selection"
+
+        # Get the index for the match
+        ix = manifest[0].get('index')
+        assert ix is not None
+
+        # Return the abundance for this index
+        return self.read_item(
+            os.path.join(base_path, "LG/wald"),
+            f"{ix}.feather"
+        )
+
+
 def hdf5_get_keys(
     fp, 
     group_path, 
