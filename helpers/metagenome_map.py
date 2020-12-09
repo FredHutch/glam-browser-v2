@@ -1715,10 +1715,11 @@ def write_edges(writer, G, output_folder):
     """Reformat the edges from the graph object as a table in feather format."""
     
     # Make a table of edges
+    # Node names will be formatted as strings
     edge_df = pd.DataFrame([
         {
-            "from": edge[0],
-            "to": edge[1]
+            "from": str(edge[0]),
+            "to": str(edge[1])
         }
         for edge in G.edges
     ])
@@ -1779,7 +1780,7 @@ def expand_single_subnetwork(lg_name_list, G, tsne_coords, final_size):
     if len(lg_name_list) == 1:
         node_name = list(lg_name_list)[0]
         return pd.DataFrame([{
-            "linkage_group": node_name,
+            "node": str(node_name),
             "type": node_type_dict[node_name],
             col_names[0]: tsne_coords[0],
             col_names[1]: tsne_coords[1],
@@ -1810,13 +1811,13 @@ def expand_single_subnetwork(lg_name_list, G, tsne_coords, final_size):
     pos = pos.reset_index(
     ).rename(
         columns={
-            "index": "linkage_group",
+            "index": "node",
         }
     )
 
     # Add the node types
     pos = pos.assign(
-        type = pos["linkage_group"].apply(node_name.get)
+        type = pos["node"].apply(node_name.get)
     )
 
     return pos
