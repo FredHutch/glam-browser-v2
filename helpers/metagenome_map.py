@@ -1823,19 +1823,21 @@ def expand_single_subnetwork(lg_name_list, G, tsne_coords, final_size):
     return pos
 
 
-def subnetwork_size(gene_index_df, node_groupings):
+def subnetwork_size(gene_index_df, node_groupings, node_type_dict):
     # Get the number of genes per linkage group
     lg_size = gene_index_df[
         "linkage_group"
     ].value_counts()
 
     # Make sure that there is a size for all linkage groups
+    # while excluding the genomes from this metric
     n_missing = np.sum(list(map(
         lambda lg_name: int(lg_size.get(lg_name) is None),
         [
             lg_name
             for lg_name_list in node_groupings.values()
             for lg_name in lg_name_list
+            if node_type_dict.get(lg_name) == "metagenome"
         ]
     )))
 
@@ -1843,7 +1845,11 @@ def subnetwork_size(gene_index_df, node_groupings):
 
     # Return the sum of the sizes of the linkage groups in each subnetwork
     return {
-        n: np.sum(list(map(lg_size.get, lg_name_list)))
+        n: np.sum([
+            lg_size[lg_name]
+            for lg_name in lg_name_list
+            if node_type_dict.get(lg_name) == "metagenome"
+        ])
         for n, lg_name_list in node_groupings.items()
     }
 
@@ -2083,6 +2089,7 @@ def linkage_partition(
     size_dict = subnetwork_size(
         gene_index_df,
         node_groupings,
+        nx.get_node_attributes(G, "type"),
     )
 
     # Use that linkage matrix to build a set of coordinates
