@@ -86,7 +86,7 @@ def glam_network(
     ############################
 
     # Read in the genome information
-    genome_gene_sets = read_genome_gene_sets(detail_hdf)
+    genome_gene_sets = read_genome_gene_sets(summary_hdf)
     
     genome_overlap_df = count_genome_overlap(LN, genome_gene_sets)
     
