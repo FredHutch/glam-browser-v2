@@ -1817,7 +1817,7 @@ def expand_single_subnetwork(lg_name_list, G, tsne_coords, final_size):
 
     # Add the node types
     pos = pos.assign(
-        type = pos["node"].apply(node_name.get)
+        type = pos["node"].apply(node_type_dict.get)
     )
 
     return pos
