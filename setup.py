@@ -28,6 +28,7 @@ setuptools.setup(
         "mysql",
         "mysql-connector-python-rf",
         "networkx",
+        "scipy",
         "sqlalchemy",
         "h5py",
     ],
