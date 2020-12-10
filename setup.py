@@ -24,6 +24,7 @@ setuptools.setup(
         "pandas>=0.20.3",
         "boto3>=1.4.7",
         "expiringdict",
+        "fastcluster",
         "mysql",
         "mysql-connector-python-rf",
         "sqlalchemy",
