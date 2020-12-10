@@ -27,6 +27,7 @@ setuptools.setup(
         "fastcluster",
         "mysql",
         "mysql-connector-python-rf",
+        "networkx",
         "sqlalchemy",
         "h5py",
     ],
