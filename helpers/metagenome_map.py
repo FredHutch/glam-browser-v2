@@ -1766,6 +1766,13 @@ def expand_subnetworks(node_groupings, G, coords, q=0.25):
             for n, lg_name_list in node_groupings.items()
             if n in coords.index.values
         ]
+    ).astype(
+        {
+            "node": str,
+            "type": str,
+            coords.columns.values[0]: float,
+            coords.columns.values[1]: float,
+        }
     )
 
 
