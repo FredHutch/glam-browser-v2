@@ -65,17 +65,8 @@ class GLAM_INDEX:
         # Open a connection to the AWS S3 bucket
         self.client = self.session.client("s3")
 
-    def __del__(self):
-        self.close()
-
     def __enter__(self):
         return self
-
-    def __exit__(self, type, value, tb):
-        self.close()
-
-    def close(self):
-        self.store.close()
 
     def leaves(self, path):
         return self.tree.get(path, {}).get("leaves", [])
