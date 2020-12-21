@@ -732,6 +732,7 @@ class GLAM_LAYOUT:
             GenomeContainmentHeatmap() if self.glam_io.has_genomes(dataset_uri) and self.glam_io.has_genome_parameters(dataset_uri) else None,
             GenomeAssociationCard() if self.glam_io.has_genomes(dataset_uri) and self.glam_io.has_genome_parameters(dataset_uri) else None,
             GenomeAlignmentsCard() if self.glam_io.has_genomes(dataset_uri) else None,
+            MetagenomeMap() if self.glam_io.has_linkage_groups(dataset_uri) else None,
         ]
 
     # Key the analysis by `short_name`
@@ -2623,6 +2624,73 @@ statistic is added in the plot.
                 ])
             ],
         )
+
+
+#######################
+# METAGENOME MAP CARD #
+#######################
+class MetagenomeMap(AnalysisCard):
+
+    def __init__(self):
+
+        self.long_name = "Metagenome Map"
+        self.description = "Annotated visual display of all metagenomic elements"
+        self.short_name = "metagenome_map"
+        self.plot_list = []
+        self.defaults = dict()
+        self.dynamic_defaults = dict()
+
+        self.help_text = """
+Metagenomic datasets can be thought of as collections of genes, each of which can
+be found in one or more organisms from a set of specimens. By processing these
+datasets with the _geneshot_ analysis pipeline, we are able to capture a large
+amount of information about these genes, including:
+
+ - The sets of genes which are co-abundant (i.e. whose abundances are correlated across specimens)
+ - The sets of genes which co-assembly (i.e. are found on the same _de novo_ assembled contigs)
+ - The relative abundance of those organisms containing each gene in each specimen
+ - The taxonomic annotation (as determined by alignment against NCBI RefSeq)
+ - The estimated association of relative abundance with some aspect of experimental design (e.g. treatment vs. control)
+
+ To display this collection of information within a single plot, we have organized
+ genes based on _both_ their co-abundance and co-assembly into groupings called
+ 'linkage groups.' Each linkage group (LG) contains a set of genes which are either
+ co-abundant or which co-assemble. An LG may be connected to another LG if they are
+ concordant for one aspect of linkage (e.g. co-abundance) but discordant for another
+ (e.g. co-assembly). In addition, an LG may be connected to a reference genome if the
+ genes from that LG align to the reference genome.
+
+ In the metagenome map, LGs are arranged more closely to each other if they share
+ a similar set of taxonomic annotations. In addition, each LG may be annotated visually
+ on the basis of any of the features described above: taxonomic annotation, relative
+ abundance, or estimated association with experimental design.
+        """
+
+    def card(self, dataset_id, dataset_uri, search_string, glam_io):
+
+        # Parse the search string, while setting default arguments for this card
+        self.args = decode_search_string(
+            search_string, **self.defaults
+        )
+
+        # Set the dataset ID (used to render card components)
+        self.dataset_id = dataset_id
+
+        return self.card_wrapper(
+            dataset_id,
+            [
+                dbc.Row([
+                    dbc.Col(
+                        # Just contains the plot
+                        self.plot_div(
+                            # The plot ID used below corresponds to a plot defined in GLAMPlotting
+                            "metagenome-map"
+                        ),
+                    ),
+                ])
+            ],
+        )
+
 
 
 #################

@@ -76,18 +76,8 @@ class GLAM_INDEX:
         # Keep a dict to cache some of the tables from the HDF5
         self.cache = {}
 
-    def __del__(self):
-        self.close()
-
     def __enter__(self):
         return self
-
-    def __exit__(self, type, value, tb):
-        self.close()
-
-    def close(self):
-        if hasattr(self, 'store'):
-            self.store.close()
 
     def leaves(self, path):
         return self.tree.get(path, {}).get("leaves", [])

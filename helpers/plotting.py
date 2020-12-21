@@ -37,6 +37,7 @@ class GLAM_PLOTTING:
             "genome-association-scatterplot": self.genome_association_plot,
             "tax-sunburst": self.taxononmy_sunburst,
             "genome-containment-heatmap": self.genome_containment_heatmap,
+            "metagenome-map": self.metagenome_map,
         }
 
     ##################################
@@ -1838,6 +1839,31 @@ class GLAM_PLOTTING:
             arrow_dy = arrow_dy,
             arrow_dx = arrow_dx,
         )   
+
+    ##################
+    # METAGENOME MAP #
+    ##################
+    def metagenome_map(
+        self,
+        glam_io=None,
+        args=None,
+        dataset_uri=None,
+    ):
+        """Render the metagenome map."""
+        
+        # Read in the coordinates of each LG
+        coords = glam_io.get_lg_coords(dataset_uri)
+        assert coords is not None, "Linkage Group coordinates not found"
+
+        # Read in the edges to be drawn between each LG
+        edges = glam_io.get_lg_edges(dataset_uri)
+        assert edges is not None, "Linkage Group edges not found"
+
+        print(coords.head())
+        print(edges.head())
+        print(edges.shape)
+        print(edges.tail())
+        print(edges['from'].value_counts().head(40))
 
 
 def calc_clr(v):

@@ -78,8 +78,12 @@ class GLAM_IO:
         # Parse with Pandas
         if suffix.endswith(".feather"):
             df = pd.read_feather(io.BytesIO(obj['Body'].read()))
-        else:
+        elif suffix.endswith(".csv.gz"):
             df = pd.read_csv(io.BytesIO(obj['Body'].read()), compression="gzip")
+        elif suffix.endswith(".json"):
+            df = json.load(io.BytesIO(obj['Body'].read()))
+        else:
+            assert False, f"Suffix not supported: {suffix}"
 
         # Store in the cache
         logging.info(f"Saving to the cache - {cache_key}")
@@ -542,6 +546,10 @@ class GLAM_IO:
             "network-size.json"
         )
 
+    def has_linkage_groups(self, base_path):
+        """Returns True / False indicating whether linkage group data is present."""
+        return self.get_lg_summary(base_path) is not None
+
     def get_lg_taxa(self, base_path, tax_rank):
         """Return the taxonomic assignments for all LGs at a particular taxonomic rank."""
         return self.read_item(
@@ -558,10 +566,14 @@ class GLAM_IO:
 
     def get_lg_coords(self, base_path):
         """Return the list of coordinates for the metagenome map."""
-        return self.read_item(
+        df = self.read_item(
             os.path.join(base_path, "LG"),
             "coords.feather"
         )
+        if df is not None:
+            return df.set_index("linkage_group")
+        else:
+            return None
 
     def get_lg_gene_annotations(self, base_path, lg_id, mod=1000):
         """Get the annotations for the genes in a particular LG."""
