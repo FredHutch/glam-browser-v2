@@ -729,7 +729,7 @@ def pick_top_taxon(
             }
             for subnetwork_name, lg_assignments in rank_assignments.iterrows()
             for lg_name in node_groupings[subnetwork_name]
-            if lg_size[lg_name] >= min_size
+            if lg_size.get(lg_name, 0) >= min_size
         ]
     ).query(
         f"proportion >= {min_prop}"
