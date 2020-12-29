@@ -2,6 +2,7 @@ FROM quay.io/aptible/ubuntu:18.04
 RUN apt-get update && \
 	apt-get install -y python3.8 python3-pip python3.8-dev libmariadb-dev && \
 	apt-get install -y hdf5-tools libhdf5-dev libhdf5-serial-dev build-essential && \
+	python3.8 -m pip install Cython>=0.28.5 && \
 	python3.8 -m pip install numpy && \
 	python3.8 -m pip install scipy && \
 	python3.8 -m pip install pandas
